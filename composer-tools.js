@@ -3,6 +3,22 @@
   'use strict';
   const clean = value => String(value || '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   const text = el => clean(el?.innerText || el?.textContent);
+  const researchAppId = 'app://connector_openai_deep_research';
+  const compact = value => clean(value).toLowerCase().replace(/[\s_-]/g, '');
+  const toolAliases = {
+    research: ['deepresearch', 'research', 'ディープリサーチ'],
+    canvas: ['canvas', 'キャンバス']
+  };
+  const toolKind = tool => tool?.type === 'tool' || tool?.id === researchAppId
+    ? Object.keys(toolAliases).find(key => toolAliases[key].includes(compact(tool.label)) ||
+      (key === 'research' && /(?:tool:research|tool:deep_research|connector_openai_deep_research)$/.test(tool.id))) || null
+    : null;
+  const matchesQuery = (tool, query, exact = false) => {
+    const label = clean(tool.label).toLowerCase(), needle = clean(query).toLowerCase();
+    if (exact ? label === needle : label.includes(needle)) return true;
+    const aliases = toolAliases[toolKind(tool)] || [];
+    return aliases.some(alias => exact ? alias === compact(query) : alias.includes(compact(query)));
+  };
   const hintNames = {
     search: /^(ウェブ検索|Web search|Search)$/i,
     picture_v2: /^(画像を作成|画像作成|Create image|Create an image)$/i,
@@ -19,7 +35,7 @@
       if (!id || id.length > 200 || !label || label.length > 100 || seen.has(id) || seen.has(labelKey)) return [];
       seen.add(id);
       seen.add(labelKey);
-      return [{ type: value.type, platform: value.platform, id, label }];
+      return [{ type: id === researchAppId ? 'tool' : value.type, platform: value.platform, id, label }];
     });
   };
 
@@ -66,7 +82,7 @@
       }
       const tokens = Array.from(input.querySelectorAll('[app-mention-path], [data-system-hint-type]')).flatMap(el => {
         const path = el.getAttribute('app-mention-path');
-        if (path?.startsWith('app://')) return [{ el, tool: { platform: 'chatgpt', type: 'app', id: path,
+        if (path?.startsWith('app://')) return [{ el, tool: { platform: 'chatgpt', type: path === researchAppId ? 'tool' : 'app', id: path,
           label: el.getAttribute('app-mention-display-name') || text(el) } }];
         const name = el.getAttribute('data-system-hint-type');
         if (name && /^[a-z\d_-]+$/i.test(name)) return [{ el, tool: { platform: 'chatgpt', type: 'tool', id: `chatgpt:tool:${name}`,
@@ -86,7 +102,7 @@
     geminiSelected() {
       const composer = this.getInput()?.closest('input-container, input-area, .text-input-field');
       if (!composer) return [];
-      return Array.from(composer.querySelectorAll('button[aria-label]')).filter(el => /選択を解除|deselect|remove.*(?:tool|mode)/i.test(el.getAttribute('aria-label')))
+      return Array.from(composer.querySelectorAll('button[aria-label]')).filter(el => this.visible(el) && /選択を解除|deselect|remove.*(?:tool|mode)/i.test(el.getAttribute('aria-label')))
         .flatMap(el => {
           const icon = el.querySelector('[data-mat-icon-name]:not([data-mat-icon-name="close"])')?.getAttribute('data-mat-icon-name');
           const label = text(el.querySelector('.gds-body-m'));
@@ -115,16 +131,16 @@
     }
 
     menuOpen() {
-      return Array.from(this.doc.querySelectorAll('[data-mention-section-items], #at-mentions-v2-panel, .toolbox-drawer-item-list-button[role="menuitemcheckbox"]')).some(el => this.visible(el));
+      return this.entries().length > 0 || Array.from(this.doc.querySelectorAll('[data-mention-section-items], #at-mentions-v2-panel, .toolbox-drawer-item-list-button[role="menuitemcheckbox"]')).some(el => this.visible(el));
     }
 
     entries() {
       if (this.platform === 'chatgpt') {
-        return Array.from(this.doc.querySelectorAll('[data-mention-section-items] button[data-list-navigation-item]')).flatMap(el => {
+        return Array.from(this.doc.querySelectorAll('button[data-list-navigation-item][data-plugin-impression-id], [data-mention-section-items] button[data-list-navigation-item], button[data-list-navigation-item]:has([data-menu-row-content])')).flatMap(el => {
           if (!this.visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') return [];
           const label = text(el.querySelector('[data-menu-row-content] .shrink-0.truncate')) || text(el).split('\n')[0];
           const plugin = el.getAttribute('data-plugin-impression-id');
-          if (plugin) return [{ el, tool: { platform: 'chatgpt', type: 'app', id: `app://${plugin}`, label } }];
+          if (plugin) return [{ el, tool: { platform: 'chatgpt', type: `app://${plugin}` === researchAppId ? 'tool' : 'app', id: `app://${plugin}`, label } }];
           const name = Object.keys(hintNames).find(key => hintNames[key].test(label));
           return name ? [{ el, tool: { platform: 'chatgpt', type: 'tool', id: `chatgpt:tool:${name}`, label } }] : [];
         });
@@ -146,6 +162,16 @@
       (this.doc.activeElement || this.getInput())?.dispatchEvent(new this.doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
     }
 
+    async dismiss() {
+      this.escape();
+      await this.wait(80);
+      const trigger = this.toolsTrigger();
+      if (trigger?.getAttribute('aria-expanded') === 'true' && this.menuOpen()) {
+        trigger.click();
+        await this.wait(80);
+      }
+    }
+
     async until(read, message) {
       for (let i = 0; i < 25; i++) {
         const result = read();
@@ -155,16 +181,24 @@
       throw new Error(message);
     }
 
-    geminiTrigger() {
-      return Array.from(this.doc.querySelectorAll('button')).find(el => this.visible(el) && /^(アップロードとツール|Upload.*tools|Tools)$/i.test(el.getAttribute('aria-label') || ''));
+    toolsTrigger() {
+      const input = this.getInput();
+      const names = this.platform === 'gemini' ? /^(アップロードとツール|Upload.*tools|Tools|ツール)$/i
+        : /^(ファイルなどを追加|ファイルとツールを追加|Add files and more|Add photos.*files|Add files|Tools|ツール)$/i;
+      for (let parent = input?.parentElement; parent && parent !== this.doc.body; parent = parent.parentElement) {
+        const button = Array.from(parent.querySelectorAll('button')).find(el => this.visible(el) && names.test(el.getAttribute('aria-label') || ''));
+        if (button) return button;
+      }
+      return null;
     }
 
     async open(kind, query = '', prefix = []) {
-      if (this.platform === 'gemini' && kind === 'tool') {
+      if (kind === 'tool') {
         if (!this.entries().some(entry => entry.tool.type === 'tool')) {
-          const trigger = this.geminiTrigger();
-          if (!trigger) throw new Error('Geminiのツールメニューが見つかりません。');
-          trigger.click();
+          const trigger = this.toolsTrigger();
+          if (trigger) trigger.click();
+          else if (this.platform === 'chatgpt') this.setText(this.getInput(), '@', prefix);
+          else throw new Error('Geminiのツールメニューが見つかりません。');
         }
       } else {
         this.setText(this.getInput(), '@' + query, prefix);
@@ -172,6 +206,19 @@
       await this.until(() => this.menuOpen(), '候補を開けませんでした。対象のチャットタブを開いて再試行してください。');
       // Search results may update asynchronously after the menu has appeared.
       await this.wait(180);
+      if (this.platform === 'gemini' && kind === 'tool') {
+        const more = Array.from(this.doc.querySelectorAll('button[data-test-id="more-tools-button"], button[aria-label="その他のツール"], button[aria-label="More tools"]'))
+          .find(el => this.visible(el));
+        if (more && more.getAttribute('aria-expanded') !== 'true' &&
+          (!query || !this.entries().some(entry => matchesQuery(entry.tool, query, true)))) {
+          // Gemini's nested drawer opens on hover; click alone does not open every rollout.
+          more.dispatchEvent(new this.doc.defaultView.MouseEvent('mouseenter', { bubbles: false }));
+          more.dispatchEvent(new this.doc.defaultView.MouseEvent('mouseover', { bubbles: true }));
+          more.click();
+          await this.until(() => more.getAttribute('aria-expanded') === 'true', 'その他のツールを開けませんでした。対象タブを開いて再試行してください。');
+          await this.wait(180);
+        }
+      }
       return this.entries();
     }
 
@@ -185,17 +232,21 @@
     async query(marker, query) {
       return this.exclusive(async () => {
         const kind = marker === '/' ? 'tool' : 'app';
-        if (this.menuOpen()) return normalize(this.entries().map(entry => entry.tool)).filter(tool => (marker !== '/' || tool.type === 'tool') && tool.label.toLowerCase().includes(query.toLowerCase()));
+        if (this.menuOpen()) {
+          const options = normalize(this.entries().map(entry => entry.tool)).filter(tool => (marker !== '/' || tool.type === 'tool') && matchesQuery(tool, query));
+          if (this.platform !== 'gemini' || kind !== 'tool' || (query && options.length)) return options;
+        }
         const input = this.getInput();
         if (!input) throw new Error('対象タブの入力欄が見つかりません。');
         const draft = this.capture();
-        if (draft.text || draft.tools.length) throw new Error('対象タブに下書きがあります。下書きをキューに追加するか消してから候補を取得してください。');
+        const onlyPersistentMode = this.platform === 'gemini' && !this.nativeTokens(input).length;
+        if (draft.text || (draft.tools.length && !onlyPersistentMode)) throw new Error('対象タブに下書きがあります。下書きをキューに追加するか消してから候補を取得してください。');
         const focus = this.doc.activeElement;
         try {
-          const entries = await this.open(this.platform === 'gemini' ? kind : 'app', this.platform === 'chatgpt' && marker === '/' ? '' : query);
-          return normalize(entries.map(entry => entry.tool)).filter(tool => (marker !== '/' || tool.type === 'tool') && tool.label.toLowerCase().includes(query.toLowerCase()));
+          const entries = await this.open(kind, marker === '/' && this.platform === 'chatgpt' ? '' : query);
+          return normalize(entries.map(entry => entry.tool)).filter(tool => (marker !== '/' || tool.type === 'tool') && matchesQuery(tool, query));
         } finally {
-          this.escape();
+          await this.dismiss();
           this.setText(input, '');
           if (focus?.isConnected) focus.focus();
         }
@@ -206,6 +257,7 @@
       const tools = normalize(values);
       if (Array.isArray(values) && tools.length !== values.length) throw new Error('保存されたアプリ・ツール指定を読み取れません。');
       if (tools.some(tool => tool.platform !== this.platform)) throw new Error('別サービスのアプリ・ツールは使用できません。');
+      if (this.platform === 'gemini' && tools.filter(tool => tool.type === 'tool').length > 1) throw new Error('Geminiのツールは1つのプロンプトにつき1つ指定してください。');
       if (this.capture().text) throw new Error('対象タブに下書きがあるため自動送信を待機します。');
       const selectedNodes = [];
       await this.exclusive(async () => {
@@ -223,7 +275,7 @@
             if (!entry.selected) entry.el.click();
             await this.until(() => this.capture().tools.some(actual => actual.type === tool.type &&
               (actual.id === tool.id || (tool.type === 'tool' && actual.label === tool.label))), `${tool.label} の選択を確認できませんでした。`);
-            this.escape();
+            await this.dismiss();
             selectedNodes.splice(0, selectedNodes.length, ...this.nativeTokens().map(token => token.el.cloneNode(true)));
           }
           const actual = this.capture().tools;
@@ -233,7 +285,7 @@
           this.lastSelection = actual;
           this.setText(this.getInput(), '', selectedNodes);
         } catch (error) {
-          this.escape();
+          await this.dismiss();
           this.setText(this.getInput(), '');
           throw error;
         }
@@ -248,7 +300,7 @@
       if (parsed.requests.length > 20) throw new Error('アプリ・ツールの指定は20件以内にしてください。');
       for (const request of parsed.requests) {
         const candidates = await this.query(request.marker, request.label);
-        const matches = candidates.filter(tool => tool.label.toLocaleLowerCase() === request.label.toLocaleLowerCase());
+        const matches = candidates.filter(tool => matchesQuery(tool, request.label, true));
         if (matches.length !== 1) throw new Error(`${request.marker}${request.label} を一意に選択できません。アプリ・ツール名を確認してください。`);
         tools = normalize([...tools, matches[0]]);
       }
@@ -444,7 +496,7 @@
   async function recall(platform, marker, query = '') {
     const needle = clean(query).toLowerCase();
     return normalize((await readHistory())[platform] || [])
-      .filter(tool => (marker !== '/' || tool.type === 'tool') && tool.label.toLowerCase().includes(needle));
+      .filter(tool => (marker !== '/' || tool.type === 'tool') && matchesQuery(tool, needle));
   }
 
   function mergeOptions(native, remembered) {
@@ -457,7 +509,7 @@
     return [...current, ...extra];
   }
 
-  const api = { NativeTools, normalize, parsePrompt, attach, remember, recall, mergeOptions };
+  const api = { NativeTools, normalize, parsePrompt, attach, remember, recall, mergeOptions, toolKind, matchesQuery };
   globalThis.CGQComposerTools = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

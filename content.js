@@ -366,6 +366,15 @@
       return last ? { parent: last.parentElement, before: last.nextElementSibling } : null;
     },
 
+    getResearchPlanAction() {
+      const roots = $$v(IS_GEMINI ? 'model-response' : '[data-turn-key], [data-testid^="conversation-turn-"], [data-message-author-role="assistant"]');
+      const latest = roots[roots.length - 1];
+      return Array.from(latest?.querySelectorAll('button') || []).find(button =>
+        isShown(button) && !button.closest('[hidden], [inert], [aria-hidden="true"]') && !button.disabled && button.getAttribute('aria-disabled') !== 'true' &&
+        /^(?:Start research|Start researching|リサーチを開始|調査を開始|研究を開始)$/i.test(
+          (button.getAttribute('aria-label') || button.innerText || button.textContent || '').trim())) || null;
+    },
+
     isGenerating() {
       if (IS_GEMINI) {
         const stopBtn = (
@@ -3371,6 +3380,13 @@
         await sleep(loopInterval);
         await this.checkUrlChange();
 
+        // Research plans require a user review. Do not feed the next queued prompt into it,
+        // or treat time spent reviewing as a stalled generation that needs a new chat.
+        if (DOM.getResearchPlanAction()) {
+          if (!this.isPaused) this.setState(QueueState.WAITING_GENERATION, 'Deep Researchの計画確認待ち: 対象タブでリサーチを開始してください');
+          continue;
+        }
+
         if (await this.checkConversationLimitAndStartNewChat()) continue;
         if (await this.checkDeliveryTimeout()) continue;
         if (await this.checkStalledAndStartNewChat()) continue;
@@ -3381,7 +3397,7 @@
         }
 
         if (this.isPaused) {
-          this.setState(QueueState.PAUSED, '一時停止中');
+          if (this.currentState !== QueueState.PAUSED || !this.currentAction) this.setState(QueueState.PAUSED, '一時停止中');
           continue;
         }
 
@@ -3421,7 +3437,7 @@
 
         for (let check = 0; check < checkCount; check++) {
           await sleep(checkDelay);
-          if (DOM.getConversationLimitWarning() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
+          if (DOM.getConversationLimitWarning() || DOM.getResearchPlanAction() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
             stable = false;
             break;
           }
@@ -3509,7 +3525,7 @@
             aborted = true;
             break;
           }
-          if (DOM.getConversationLimitWarning() || DOM.isGenerating()) {
+          if (DOM.getConversationLimitWarning() || DOM.getResearchPlanAction() || DOM.isGenerating()) {
             aborted = true;
             break;
           }
@@ -3548,7 +3564,7 @@
           try { switched = await DOM.switchReasoningEffort(nextItem.effort); } catch (e) { switched = false; }
           if (!switched) showToast(`思考設定「${DOM.formatEffortLabel(nextItem.effort)}」を変更できなかったため、現在の設定のまま続行します`);
         }
-        if (this.isPaused || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
+        if (this.isPaused || DOM.getResearchPlanAction() || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
 
         const draft = DOM.getComposerText();
         if (draft) {

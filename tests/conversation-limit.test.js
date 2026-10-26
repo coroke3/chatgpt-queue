@@ -8,6 +8,50 @@ const warning = 'この会話は長さの上限に到達していますが、新
 const markerKey = 'cgq_chat_rollover';
 const root = path.join(__dirname, '..');
 
+test('Research plan review holds the next queue item without retrying, then resumes after review', async t => {
+  for (const platform of ['chatgpt', 'gemini']) {
+    const plan = platform === 'gemini' ? '<model-response><button>リサーチを開始</button></model-response>'
+      : '<article data-turn-key="answer"><button>Start research</button></article>';
+    const f = fixture(t, { url: platform === 'gemini' ? 'https://gemini.google.com/app/test' : 'https://chatgpt.com/c/test',
+      html: plan + '<textarea id="prompt-textarea"></textarea>' });
+    await f.queue.enqueue('Next prompt');
+    f.queue.checkStalledAndStartNewChat = () => assert.fail('review is not a stalled response');
+    f.HumanSimulator.typeText = () => assert.fail('must wait for review');
+    await f.queue.runLoopStep();
+    assert.equal(f.queue.items.length, 1);
+    assert.match(f.queue.currentAction, /計画確認待ち/);
+    f.window.document.querySelector('main button').remove();
+    f.queue.checkStalledAndStartNewChat = async () => false;
+    f.HumanSimulator.typeText = async () => true;
+    let sent = false;
+    f.HumanSimulator.clickSend = async () => { sent = true; return true; };
+    f.window.__stopLoop = () => sent;
+    await assert.rejects(f.queue.startLoop(), /TEST_STOP/);
+    assert.equal(f.queue.items.length, 0);
+  }
+});
+
+test('historical, disabled, or hidden Research plan controls do not hold ordinary queue items', t => {
+  const f = fixture(t, { html: '<article data-turn-key="old"><button>Start research</button></article><article data-turn-key="latest">Finished report</article>' });
+  assert.equal(f.DOM.getResearchPlanAction(), null);
+  for (const html of ['<button disabled>Start research</button>', '<div hidden><button>Start research</button></div>', '<p>Start research</p>']) {
+    f.window.document.querySelector('main').innerHTML = `<article data-turn-key="latest">${html}</article>`;
+    assert.equal(f.DOM.getResearchPlanAction(), null);
+  }
+});
+
+test('an unavailable tool pause retains its diagnostic reason on subsequent loop steps', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+  await f.queue.enqueue('/deepresearch 調査');
+  f.composerTools.query = async () => [];
+  await f.queue.runLoopStep();
+  assert.equal(f.queue.isPaused, true);
+  const reason = f.queue.currentAction;
+  assert.match(reason, /一意に選択できません/);
+  await f.queue.runLoopStep();
+  assert.equal(f.queue.currentAction, reason);
+});
+
 test('/newchat is executed locally, then ordered prompts and settings resume in the new chat', async t => {
   const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
   await f.queue.enqueueMany(['/newchat @GitHub Review the repository', 'Next question'], { model: 'auto', effort: 'high' });
