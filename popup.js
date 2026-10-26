@@ -54,13 +54,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   await updateFromTab();
 
   // Add prompt to active tab
+  let adding = false;
   const handleAdd = () => {
-    if (!popupInput || !activeTabId) return;
+    if (!popupInput || !activeTabId || adding) return;
     const text = popupInput.value.trim();
     if (!text) return;
 
-    chrome.tabs.sendMessage(activeTabId, { action: 'ADD_TO_TAB_QUEUE', text }, () => {
-      popupInput.value = '';
+    adding = true;
+    if (btnAdd) btnAdd.disabled = true;
+    chrome.tabs.sendMessage(activeTabId, { action: 'ADD_TO_TAB_QUEUE', text }, (response) => {
+      adding = false;
+      if (btnAdd) btnAdd.disabled = false;
+      if (chrome.runtime.lastError || !response?.success) {
+        if (statItems) statItems.textContent = '追加できませんでした。対象タブを再読み込みして再試行してください';
+        return;
+      }
+      if (popupInput.value.trim() === text) popupInput.value = '';
       updateFromTab();
     });
   };

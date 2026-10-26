@@ -2316,12 +2316,12 @@
         } catch (e) {}
       };
 
+      // A disabled control is a service-side readiness gate. Never bypass it
+      // through clicks, form submission or synthetic Enter events.
+      if (isButtonDisabled(sendBtn)) return false;
+
       // 3. Primary attempt: Click the send button if present
       if (sendBtn) {
-        // Force-remove disabled attribute if still stuck
-        if (sendBtn.hasAttribute('disabled')) sendBtn.removeAttribute('disabled');
-        if (sendBtn.getAttribute('aria-disabled') === 'true') sendBtn.setAttribute('aria-disabled', 'false');
-
         triggerFullClick(sendBtn);
 
         const sentQuick = await HumanSimulator.confirmSent(prompt, beforeLast, 2000);
@@ -2392,7 +2392,7 @@
       this.settings = { ...DEFAULT_SETTINGS };
       this.uiState = { ...DEFAULT_UI_STATE };
       this.currentState = QueueState.IDLE;
-      this.isPaused = false;
+      this.restorePauseState();
       this.currentAction = '';
       this.progressText = '';
       this.progressPercent = 0;
@@ -2416,6 +2416,18 @@
 
     get storageKeyQueue() {
       return `cgq_queue_${this.tabId}`;
+    }
+
+    get isPaused() { return this._isPaused === true; }
+
+    set isPaused(value) {
+      this._isPaused = !!value;
+      try { sessionStorage.setItem(`cgq_paused_${this.tabId}`, String(this._isPaused)); } catch (error) {}
+    }
+
+    restorePauseState() {
+      try { this._isPaused = sessionStorage.getItem(`cgq_paused_${this.tabId}`) === 'true'; }
+      catch (error) { this._isPaused = false; }
     }
 
     get storageKeyCmd() {
@@ -2936,6 +2948,7 @@
     }
 
     async loadFromStorage() {
+      this.restorePauseState();
       try {
         const qKey = this.storageKeyQueue;
         const result = await chrome.storage.local.get([
@@ -2970,7 +2983,11 @@
         }
         const qKey = this.storageKeyQueue;
         if (changes[qKey]) {
-          this.items = changes[qKey].newValue || [];
+          const previous = this.items;
+          this.items = (changes[qKey].newValue || []).map(item => {
+            const existing = previous.find(entry => entry.id === item.id);
+            return existing ? Object.assign(existing, item) : item;
+          });
           this.notify();
         }
 
@@ -3234,11 +3251,49 @@
       chrome.storage.local.remove(this.storageKeyCmd);
     }
 
+    serializeQueueWrite(operation) {
+      const pending = (this.queueWrite || Promise.resolve()).then(operation);
+      this.queueWrite = pending.catch(() => {});
+      return pending;
+    }
+
+    async mutateQueue(change) {
+      const key = this.storageKeyQueue;
+      return this.serializeQueueWrite(async () => {
+        try {
+          const stored = await chrome.storage.local.get([key]);
+          const original = this.items;
+          const next = (Array.isArray(stored[key]) ? stored[key] : original).map(item => ({ ...item }));
+          if (change(next) === false) return false;
+          await chrome.storage.local.set({ [key]: next });
+          if (key === this.storageKeyQueue) {
+            // Keep the active read-delay item's identity so edits reach the sender.
+            this.items = next.map(item => {
+              const existing = original.find(entry => entry.id === item.id);
+              return existing ? Object.assign(existing, item) : item;
+            });
+            this.notify();
+          }
+          return true;
+        } catch (error) {
+          showToast('キューを保存できませんでした。入力内容を保持して、もう一度お試しください。');
+          return false;
+        }
+      });
+    }
+
     async saveQueue() {
-      try {
-        await chrome.storage.local.set({ [this.storageKeyQueue]: this.items });
-      } catch (e) {}
-      this.notify();
+      const key = this.storageKeyQueue;
+      return this.serializeQueueWrite(async () => {
+        try {
+          await chrome.storage.local.set({ [key]: this.items });
+          this.notify();
+          return true;
+        } catch (error) {
+          showToast('キューを保存できませんでした');
+          return false;
+        }
+      });
     }
 
     async saveSettings(newSettings) {
@@ -3270,17 +3325,7 @@
       };
       CGQComposerTools.remember(item.tools);
 
-      try {
-        const qKey = this.storageKeyQueue;
-        const result = await chrome.storage.local.get([qKey]);
-        const latestQueue = Array.isArray(result[qKey]) ? result[qKey] : [];
-        latestQueue.push(item);
-        this.items = latestQueue;
-      } catch (e) {
-        this.items.push(item);
-      }
-
-      await this.saveQueue();
+      if (!await this.mutateQueue(items => { items.push(item); })) return null;
       showToast(`キューに追加しました (#${this.items.length})`);
       return item;
     }
@@ -3305,68 +3350,43 @@
       });
       if (added.length === 0) return [];
 
-      try {
-        const qKey = this.storageKeyQueue;
-        const result = await chrome.storage.local.get([qKey]);
-        const latestQueue = Array.isArray(result[qKey]) ? result[qKey] : [];
-        this.items = latestQueue.concat(newItems);
-      } catch (e) {
-        this.items = this.items.concat(newItems);
-      }
-
-      await this.saveQueue();
+      if (!await this.mutateQueue(items => { items.push(...newItems); })) return [];
       showToast(`${added.length}件のプロンプトをキューに追加しました`);
       return added;
     }
 
     async removeItem(id) {
-      try {
-        const qKey = this.storageKeyQueue;
-        const result = await chrome.storage.local.get([qKey]);
-        let latestQueue = Array.isArray(result[qKey]) ? result[qKey] : this.items;
-        latestQueue = latestQueue.filter(item => item.id !== id);
-        this.items = latestQueue;
-      } catch (e) {
-        this.items = this.items.filter(item => item.id !== id);
-      }
-      await this.saveQueue();
+      return this.mutateQueue(items => {
+        const index = items.findIndex(item => item.id === id);
+        if (index !== -1) items.splice(index, 1);
+      });
     }
 
     async moveItem(id, direction) {
-      const idx = this.items.findIndex(item => item.id === id);
-      if (idx === -1) return;
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-      if (targetIdx < 0 || targetIdx >= this.items.length) return;
-
-      const [removed] = this.items.splice(idx, 1);
-      this.items.splice(targetIdx, 0, removed);
-      await this.saveQueue();
+      return this.mutateQueue(items => {
+        const idx = items.findIndex(item => item.id === id);
+        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (idx === -1 || targetIdx < 0 || targetIdx >= items.length) return false;
+        const [removed] = items.splice(idx, 1);
+        items.splice(targetIdx, 0, removed);
+      });
     }
 
     async updateItem(id, newText) {
       if (!String(newText || '').trim()) { showToast('プロンプトを空にはできません'); return false; }
       if (this.activeItem?.id === id && this.isComposerLocked()) { showToast('送信処理中の項目は編集できません'); return false; }
-      const item = this.items.find(item => item.id === id);
-      if (item) {
-        try {
-          await chrome.storage.local.set({ [this.storageKeyQueue]: this.items.map(entry =>
-            entry.id === id ? { ...entry, text: newText.trim() } : entry) });
-        } catch (error) {
-          showToast('編集内容を保存できませんでした。入力内容を保持しています。');
-          return false;
-        }
+      return this.mutateQueue(items => {
+        if (this.activeItem?.id === id && this.isComposerLocked()) return false;
+        const item = items.find(item => item.id === id);
+        if (!item) { showToast('この項目は既に送信または削除されています'); return false; }
         item.text = newText.trim();
-        this.notify();
-        return true;
-      }
-      showToast('この項目は既に送信または削除されています');
-      return false;
+      });
     }
 
     async clearQueue() {
-      this.items = [];
-      await this.saveQueue();
-      showToast('キューをクリアしました');
+      const saved = await this.mutateQueue(items => { items.length = 0; });
+      if (saved) showToast('キューをクリアしました');
+      return saved;
     }
 
     togglePause() {
@@ -3758,22 +3778,13 @@
           this.lastSentTimestamp = Date.now();
           this.lastSentPrompt = resolvedPrompt.text;
 
-          // 送信完了したアイテムを即座にメモリから削除
-          this.items = this.items.filter(it => it.id !== nextItem.id);
-
-          try {
-            const qKey = this.storageKeyQueue;
-            const result = await chrome.storage.local.get([qKey]);
-            const latestQueue = Array.isArray(result[qKey]) ? result[qKey] : [];
-            const filtered = latestQueue.filter(it => it.id !== nextItem.id);
-            await chrome.storage.local.set({ [qKey]: filtered });
-            this.items = filtered;
-          } catch (e) {
-            // メモリ上は既に削除済み
-          }
-
+          const removed = await this.removeItem(nextItem.id);
           this.activeItem = null;
-          await this.saveQueue();
+          if (!removed) {
+            this.isPaused = true;
+            this.setState(QueueState.PAUSED, '送信済みですがキューから削除できませんでした。送信済み項目を削除してから再開してください。');
+            continue;
+          }
 
           if (this.settings.autoScroll) {
             this.isStuckToBottom = true;
@@ -3809,14 +3820,16 @@
     }
 
     async sendImmediately(id) {
-      const idx = this.items.findIndex(item => item.id === id);
-      if (idx === -1) return;
-
-      const [item] = this.items.splice(idx, 1);
-      this.items.unshift(item);
-      await this.saveQueue();
+      const saved = await this.mutateQueue(items => {
+        const idx = items.findIndex(item => item.id === id);
+        if (idx === -1) return false;
+        const [item] = items.splice(idx, 1);
+        items.unshift(item);
+      });
+      if (!saved) return false;
       this.isPaused = false;
       showToast('最優先で即時送信を開始します');
+      return true;
     }
   }
 
@@ -3841,6 +3854,22 @@
       this.domProgressBar = null;
 
       this.init();
+    }
+
+    async enqueueComposer() {
+      if (this.enqueuePending) return false;
+      const text = DOM.getComposerText();
+      if (!text) return false;
+      this.enqueuePending = true;
+      try {
+        const item = await this.qm.enqueue(text, { tools: composerTools.capture().tools });
+        if (!item) return false;
+        // Preserve text typed while the storage write was in flight.
+        if (DOM.getComposerText() === text) DOM.clearComposer();
+        return true;
+      } finally {
+        this.enqueuePending = false;
+      }
     }
 
     init() {
@@ -4400,8 +4429,7 @@
               return;
             }
             // Always queued, even when the chat is idle (the queue loop sends it in turn).
-            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-            DOM.clearComposer();
+            if (!await this.enqueueComposer()) return;
             showToast('キューに追加しました');
           };
         }
@@ -4458,8 +4486,7 @@
         if (CGQComposerTools.parsePrompt(text).action !== 'newchat') return false;
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         if (!this.qm.isComposerLocked()) {
-          await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-          DOM.clearComposer();
+          if (!await this.enqueueComposer()) return true;
         }
         return true;
       };
@@ -4498,8 +4525,7 @@
           e.stopImmediatePropagation();
           const text = DOM.getComposerText();
           if (text) {
-            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-            DOM.clearComposer();
+            if (!await this.enqueueComposer()) return;
             this.qm.isStuckToBottom = true;
             DOM.scrollToBottom(true);
           }
@@ -4521,8 +4547,7 @@
           e.stopImmediatePropagation();
           const text = DOM.getComposerText();
           if (text) {
-            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-            DOM.clearComposer();
+            if (!await this.enqueueComposer()) return;
           }
         }
       }, true);
@@ -4657,9 +4682,13 @@
       });
 
       submitBtn.onclick = async () => {
+        if (submitBtn.disabled) return;
         const validItems = getParsedPrompts();
         if (validItems.length > 0) {
-          await this.qm.enqueueMany(validItems, { tools: bulkTools.getTools() });
+          submitBtn.disabled = true;
+          const added = await this.qm.enqueueMany(validItems, { tools: bulkTools.getTools() });
+          submitBtn.disabled = false;
+          if (added.length !== validItems.length) return;
           closeModal();
           showToast(`${validItems.length}件のプロンプトを一括追加しました`);
         } else {
@@ -4970,12 +4999,12 @@
       });
     } else if (request.action === 'ADD_TO_TAB_QUEUE') {
       queueManager.enqueue(request.text, { tools: request.tools }).then(item => {
-        sendResponse({ success: true, item });
+        sendResponse({ success: !!item, item });
       });
       return true;
     } else if (request.action === 'ADD_MANY_TO_TAB_QUEUE') {
       queueManager.enqueueMany(request.texts, { tools: request.tools }).then(items => {
-        sendResponse({ success: true, items });
+        sendResponse({ success: items.length > 0, items });
       });
       return true;
     }

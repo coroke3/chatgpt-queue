@@ -106,6 +106,27 @@ test('failed edit persistence keeps the draft open and leaves the original queue
   assert.equal(editor.value, 'Unsaved edit');
 });
 
+test('queue shortcuts preserve the composer on save failure and avoid duplicate submissions', async t => {
+  const f = fixture(t);
+  f.ui.setupKeyboardShortcuts(); f.input.focus(); f.input.value = 'Keep my draft';
+  const key = () => f.input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+  const set = f.window.chrome.storage.local.set;
+  f.window.chrome.storage.local.set = async () => { throw new Error('quota'); };
+  key(); await tick(); await tick();
+  assert.equal(f.input.value, 'Keep my draft');
+  assert.equal(f.queue.items.length, 0);
+  let release;
+  f.window.chrome.storage.local.set = async values => {
+    await new Promise(resolve => { release = resolve; });
+    await set(values);
+  };
+  key(); key(); await tick();
+  f.input.value = 'New draft typed during save';
+  release(); await tick(); await tick();
+  assert.deepEqual(Array.from(f.queue.items, x => x.text), ['Keep my draft']);
+  assert.equal(f.input.value, 'New draft typed during save');
+});
+
 test('ChatGPT native send and form submit pass through during generation without being queued', async t => {
   const f = fixture(t, { generating: true }); f.ui.setupKeyboardShortcuts();
   await f.queue.enqueue('Waiting item'); f.input.value = 'Intervention';

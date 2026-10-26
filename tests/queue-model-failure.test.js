@@ -68,7 +68,7 @@ test('Gemini queue reads model metadata and proceeds through typing and send wit
   Object.assign(queue.settings, { minReadDelay: 0, maxReadDelay: 0, soundNotification: false, autoScroll: false });
   queue.notify = () => {};
   queue.saveQueue = async () => {};
-  window.chrome = { storage: { local: { get: async () => ({}) } } };
+  window.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } } };
   DOM.isGenerating = () => false;
   DOM.getPromptInput = () => window.document.querySelector('textarea');
   DOM.getLastResponseLength = () => 0;
