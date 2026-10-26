@@ -92,7 +92,7 @@
   const SESSION_KEY_CHAT_ROLLOVER = 'cgq_chat_rollover';
 
   const DEFAULT_SETTINGS = {
-    enterToQueue: true,         // Press Enter to add to queue, Shift+Enter for newline
+    enterToQueue: true,         // Queue Manager input preference; native Enter always uses the service.
     minReadDelay: 2.5,          // seconds to wait after ChatGPT completely stops
     maxReadDelay: 4.5,          // seconds
     dynamicDelay: true,         // add slight reading delay for longer prior responses
@@ -2115,22 +2115,41 @@
 
       element.focus();
 
+      const doc = element.ownerDocument || document;
+      const tokenKey = token => token.getAttribute?.('app-mention-path') ||
+        token.getAttribute?.('data-system-hint-type') || token.textContent?.trim();
+      const expectedKeys = [...new Set(tokens.map(tokenKey))];
+      const readLiveTokens = () => Array.from(element.querySelectorAll('[app-mention-path], [data-system-hint-type], strong'))
+        .filter(token => expectedKeys.includes(tokenKey(token)));
+      const useNativeAtoms = expectedKeys.length > 0 && typeof doc.execCommand === 'function';
+      const liveTokens = useNativeAtoms ? readLiveTokens() : [];
+      if (useNativeAtoms && expectedKeys.some((key, index) => tokenKey(liveTokens[index] || {}) !== key)) {
+        throw new Error('アプリ・ツールの選択が失われました。キューを再開して選択し直してください。');
+      }
+
       // 1. Try document.execCommand('insertText') which triggers native ProseMirror / Lexical / React transactions
       let execWorked = false;
       try {
-        const doc = element.ownerDocument || document;
         if (typeof doc.execCommand === 'function') {
           const sel = win.getSelection?.() || window.getSelection();
           if (sel) {
             const range = doc.createRange();
             range.selectNodeContents(element);
+            // Keep the editor's real mention atoms and their framework state. Replacing the
+            // whole editor (or cloning atoms back afterwards) loses native Research selection.
+            if (useNativeAtoms) range.setStartAfter(liveTokens[liveTokens.length - 1]);
             sel.removeAllRanges();
             sel.addRange(range);
+            // Keep a word boundary after the atom so a following @mention opens natively.
+            execWorked = doc.execCommand('insertText', false, useNativeAtoms ? ' ' + text : text);
           }
-          execWorked = doc.execCommand('insertText', false, text);
         }
       } catch (e) {
         execWorked = false;
+      }
+
+      if (useNativeAtoms && (!execWorked || expectedKeys.some((key, index) => tokenKey(readLiveTokens()[index] || {}) !== key))) {
+        throw new Error('アプリ・ツールを保持して入力できませんでした。本文の送信を中止しました。');
       }
 
       // If execCommand succeeded and element contains text, notify and return
@@ -2155,7 +2174,6 @@
         }
       }
 
-      const doc = element.ownerDocument || document;
       element.replaceChildren();
       text.split('\n').forEach((line, index) => {
         const p = doc.createElement('p');
@@ -3654,23 +3672,33 @@
         this.setState(QueueState.TYPING, 'プロンプトを入力中...');
         this.progressPercent = 0;
 
-        const typedSuccessfully = await HumanSimulator.typeText(
-          inputElem,
-          resolvedPrompt.text,
-          this.settings,
-          (current, total, mode) => {
-            this.progressPercent = Math.round((current / total) * 100);
-            if (mode === 'paste') {
-              this.progressText = `貼り付け完了 (${total}文字)`;
-            } else if (mode === 'typo') {
-              this.progressText = `入力訂正中...`;
-            } else {
-              this.progressText = `入力中: ${current} / ${total}文字 (${this.progressPercent}%)`;
-            }
-            this.notify();
-          },
-          promptTokens
-        );
+        let typedSuccessfully;
+        try {
+          typedSuccessfully = await HumanSimulator.typeText(
+            inputElem,
+            resolvedPrompt.text,
+            this.settings,
+            (current, total, mode) => {
+              this.progressPercent = Math.round((current / total) * 100);
+              if (mode === 'paste') {
+                this.progressText = `貼り付け完了 (${total}文字)`;
+              } else if (mode === 'typo') {
+                this.progressText = `入力訂正中...`;
+              } else {
+                this.progressText = `入力中: ${current} / ${total}文字 (${this.progressPercent}%)`;
+              }
+              this.notify();
+            },
+            promptTokens
+          );
+        } catch (error) {
+          DOM.clearComposer();
+          this.leftoverDraft = null;
+          this.isPaused = true;
+          this.setState(QueueState.PAUSED, `自動送信を停止: ${error.message}`);
+          showToast(`自動送信を停止: ${error.message}`);
+          continue;
+        }
         this.leftoverDraft = resolvedPrompt.text;
 
         if (!typedSuccessfully || this.isPaused || this.items.length === 0 || this.items[0].id !== nextItem.id) {
@@ -4435,8 +4463,16 @@
         }
         return true;
       };
+      const recordNativeSend = () => {
+        const text = DOM.getComposerText();
+        if (!text) return;
+        this.qm.lastSentPrompt = text;
+        this.qm.lastSentTimestamp = Date.now();
+        this.qm.isStuckToBottom = true;
+        setTimeout(() => DOM.scrollToBottom(true), 150);
+      };
       // 1. Enter key in composer:
-      // Enter always enqueues; the native send button remains available for intervention.
+      // Native Enter sends normally; +, Ctrl/Cmd+Enter and Alt+Enter enqueue.
       document.addEventListener('keydown', async (e) => {
         if (!e.isTrusted) return;
         if (this.qm.sendingNow) return;
@@ -4447,8 +4483,7 @@
 
         const isInputFocused = (document.activeElement === input || input.contains(document.activeElement));
         if (!isInputFocused) return;
-        const commandSubmit = e.key === 'Enter' && !e.shiftKey &&
-          (e.ctrlKey || e.metaKey || e.altKey || this.qm.settings.enterToQueue !== false);
+        const commandSubmit = e.key === 'Enter' && !e.shiftKey;
         if (commandSubmit && CGQComposerTools.parsePrompt(DOM.getComposerText()).action === 'newchat') {
           await enqueueCommand(e);
           return;
@@ -4474,21 +4509,7 @@
         // Enter key in composer
         if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
           if (swallowIfLocked(e)) return;
-          // enterToQueue が false の場合は Enter で改行を許容（複数行入力サポート）
-          if (this.qm.settings.enterToQueue === false) {
-            return;
-          }
-          const text = DOM.getComposerText();
-
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          if (text) {
-            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-            DOM.clearComposer();
-            this.qm.isStuckToBottom = true;
-            DOM.scrollToBottom(true);
-          }
+          recordNativeSend();
           return;
         }
 
@@ -4533,29 +4554,7 @@
 
         if (swallowIfLocked(e)) return;
 
-        if (!IS_CHATGPT && this.isBusy()) {
-          // Gemini keeps its busy-send fallback. ChatGPT's native button handles intervention.
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-
-          const text = DOM.getComposerText();
-          if (text) {
-            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-            DOM.clearComposer();
-            this.qm.isStuckToBottom = true;
-            DOM.scrollToBottom(true);
-          }
-        } else {
-          // 初回送信 (アイドル時): 直接送信
-          const text = DOM.getComposerText();
-          if (text) {
-            this.qm.lastSentPrompt = text;
-            this.qm.lastSentTimestamp = Date.now();
-            this.qm.isStuckToBottom = true;
-            setTimeout(() => DOM.scrollToBottom(true), 150);
-          }
-        }
+        recordNativeSend();
       }, true);
 
       // 3. Form submit interceptor (fallback)
@@ -4573,22 +4572,7 @@
         }
         if (swallowIfLocked(e)) return;
 
-        if (!IS_CHATGPT && this.isBusy()) {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-
-          const text = DOM.getComposerText();
-          if (text) {
-            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-            DOM.clearComposer();
-          }
-        } else {
-          const text = DOM.getComposerText();
-          if (text) {
-            this.qm.lastSentTimestamp = Date.now();
-          }
-        }
+        recordNativeSend();
       }, true);
     }
 
@@ -4704,8 +4688,8 @@
             <!-- Enter to Queue setting -->
             <div class="cgq-form-row">
               <div>
-                <div style="font-weight: 600; font-size: 12px;">Enterでキューに追加</div>
-                <div class="cgq-form-desc">Enterと＋はキュー追加。Shift+Enterは改行。ChatGPTの送信ボタンは、途中介入できるときは途中介入に使えます。OFFではEnterで改行します。</div>
+                <div style="font-weight: 600; font-size: 12px;">管理画面のEnterでキューに追加</div>
+                <div class="cgq-form-desc">この設定はQueue Managerの入力欄用です。ChatGPT・Geminiの通常入力欄はEnterで通常送信、＋またはCtrl+Enterでキュー追加、Shift+Enterで改行します。</div>
               </div>
               <label class="cgq-switch">
                 <input type="checkbox" id="cgq-set-enter-queue" ${s.enterToQueue !== false ? 'checked' : ''}>

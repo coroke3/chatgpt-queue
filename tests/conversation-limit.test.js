@@ -145,6 +145,20 @@ test('an unavailable text app request pauses without typing or losing the item',
   assert.equal(f.queue.items[0].text, '@MissingApp Question');
 });
 
+test('native tool input failure pauses once and retains the complete queued prompt', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+  const original = '/deepresearch\n公式資料を使って調査してください。';
+  await f.queue.enqueue(original);
+  f.composerTools.resolvePrompt = async () => ({ text: '公式資料を使って調査してください。', tools: [] });
+  f.HumanSimulator.typeText = async () => { throw new Error('native atom lost'); };
+  f.HumanSimulator.clickSend = () => assert.fail('do not send without verified tool selection');
+  await f.queue.runLoopStep();
+  assert.equal(f.queue.isPaused, true);
+  assert.match(f.queue.currentAction, /native atom lost/);
+  assert.equal(f.queue.items[0].text, original);
+  assert.equal(f.window.document.querySelector('textarea').value, '');
+});
+
 function fixture(t, { url = 'https://chatgpt.com/c/old-chat', html = '', data = {}, session = {} } = {}) {
   const dom = new JSDOM(`<!doctype html><body><main>${html}</main></body>`, {
     url, runScripts: 'outside-only', pretendToBeVisual: true

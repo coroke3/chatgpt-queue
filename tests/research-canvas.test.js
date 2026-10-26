@@ -4,7 +4,7 @@ const { JSDOM } = require('jsdom');
 const { NativeTools, normalize, toolKind, matchesQuery } = require('../composer-tools.js');
 
 // Menu rows, native mention attributes, and mode chips observed in Chrome, 2026-10-26.
-function fixture(t, platform, { missing = false, ignoreSelection = false, legacy = false, nested = false } = {}) {
+function fixture(t, platform, { missing = false, ignoreSelection = false, legacy = false, nested = false, clickToggles = false } = {}) {
   const dom = new JSDOM(`<body><input-container><input-area><div class="text-input-field">
     <div><div><div><div><div id="input" contenteditable="true"></div></div></div></div></div>
     <button id="tools" aria-label="${platform === 'gemini' ? 'アップロードとツール' : 'ファイルなどを追加'}"></button>
@@ -49,6 +49,11 @@ function fixture(t, platform, { missing = false, ignoreSelection = false, legacy
         const more = doc.createElement('button'); more.setAttribute('data-test-id', 'more-tools-button');
         more.setAttribute('aria-expanded', 'false'); more.setAttribute('aria-label', 'その他のツール');
         more.onmouseenter = () => { more.setAttribute('aria-expanded', 'true'); menu.append(button); };
+        if (clickToggles) more.onclick = () => {
+          const opened = more.getAttribute('aria-expanded') === 'true';
+          more.setAttribute('aria-expanded', String(!opened));
+          if (opened) button.remove(); else menu.append(button);
+        };
         menu.append(more);
       } else menu.append(button);
     }
@@ -83,12 +88,14 @@ test('both providers resolve /deepresearch and select verified native Research s
 });
 
 test('Gemini Research is discovered inside the hover-only More tools submenu', async t => {
-  const f = fixture(t, 'gemini', { nested: true });
-  const options = await f.native.query('/', 'deepresearch');
-  assert.equal(options[0].label, 'Deep Research');
-  const resolved = await f.native.resolvePrompt('/deepresearch 調査');
-  await f.native.prepare(resolved.tools);
-  assert.equal(toolKind(f.native.capture().tools[0]), 'research');
+  for (const clickToggles of [false, true]) {
+    const f = fixture(t, 'gemini', { nested: true, clickToggles });
+    const options = await f.native.query('/', 'deepresearch');
+    assert.equal(options[0].label, 'Deep Research');
+    const resolved = await f.native.resolvePrompt('/deepresearch 調査');
+    await f.native.prepare(resolved.tools);
+    assert.equal(toolKind(f.native.capture().tools[0]), 'research');
+  }
 });
 
 test('Gemini Canvas, Research and ordinary prompts switch modes without leaking prior selections', async t => {

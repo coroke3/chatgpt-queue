@@ -70,12 +70,20 @@ test('empty edits stay open, cancel preserves the prompt, and sending items cann
   assert.equal(f.ui.domList.querySelector('textarea'), null);
 });
 
-test('Enter enqueues even when idle, while Shift+Enter and IME confirmation do not submit', async t => {
-  for (const generating of [false, true]) {
-    const f = fixture(t, { generating }); f.ui.setupKeyboardShortcuts(); f.input.focus(); f.input.value = 'Queued';
+test('native Enter passes through in both services, while Ctrl+Enter still enqueues', async t => {
+  for (const platform of ['chatgpt', 'gemini']) for (const generating of [false, true]) {
+    const f = fixture(t, { generating, platform }); f.ui.setupKeyboardShortcuts(); f.input.focus(); f.input.value = 'Normal send';
+    f.queue.settings.enterToQueue = generating; // Legacy preferences must not affect native Enter.
     const enter = new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
     f.input.dispatchEvent(enter); await tick(); await tick();
-    assert.equal(enter.defaultPrevented, true);
+    assert.equal(enter.defaultPrevented, false);
+    assert.equal(f.queue.items.length, 0); assert.equal(f.input.value, 'Normal send');
+    const submit = new f.window.Event('submit', { bubbles: true, cancelable: true });
+    f.window.document.querySelector('form').dispatchEvent(submit); await tick();
+    assert.equal(submit.defaultPrevented, false); assert.equal(f.queue.items.length, 0);
+    f.input.value = 'Queued';
+    f.input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+    await tick(); await tick();
     assert.equal(f.queue.items[0].text, 'Queued'); assert.equal(f.input.value, '');
     f.input.value = 'Draft';
     for (const extra of [{ shiftKey: true }, { isComposing: true }]) {

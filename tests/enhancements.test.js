@@ -499,7 +499,7 @@ test('Auto-scroll detects bottom proximity correctly and avoids jumping when rea
   dom.window.close();
 });
 
-test('Multi-line prompt input handles Enter for newline when enterToQueue is disabled and Ctrl+Enter sends', () => {
+test('Queue Manager supports the multiline input preference and Ctrl+Enter', () => {
   // Check dashboard.js logic
   const dashJs = fs.readFileSync(path.join(root, 'dashboard.js'), 'utf8');
   assert.ok(dashJs.includes('hasCtrlOrMeta && isEnter'), 'dashboard.js must handle Ctrl/Cmd+Enter for sending');
@@ -508,7 +508,6 @@ test('Multi-line prompt input handles Enter for newline when enterToQueue is dis
   // Check content.js logic
   const contentJs = fs.readFileSync(path.join(root, 'content.js'), 'utf8');
   assert.ok(contentJs.includes('(e.ctrlKey || e.metaKey) && e.key === \'Enter\''), 'content.js must handle Ctrl/Cmd+Enter');
-  assert.ok(contentJs.includes('this.qm.settings.enterToQueue === false'), 'content.js must respect enterToQueue setting');
 });
 
 test('Queue panel stays collapsible and header remains visible when queue has many items', () => {

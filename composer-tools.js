@@ -223,7 +223,8 @@
           // Gemini's nested drawer opens on hover; click alone does not open every rollout.
           more.dispatchEvent(new this.doc.defaultView.MouseEvent('mouseenter', { bubbles: false }));
           more.dispatchEvent(new this.doc.defaultView.MouseEvent('mouseover', { bubbles: true }));
-          more.click();
+          await this.wait(120);
+          if (more.getAttribute('aria-expanded') !== 'true') more.click();
           await this.until(() => more.getAttribute('aria-expanded') === 'true', 'その他のツールを開けませんでした。対象タブを開いて再試行してください。');
           await this.wait(180);
         }
