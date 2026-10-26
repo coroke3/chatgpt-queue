@@ -294,6 +294,20 @@ body > #cgq-composer-queue-panel.cgq-collapsed {
   color: var(--cgq-warn);
 }
 
+#cgq-btn-newchat {
+  width: auto;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cgq-panel-btn:focus-visible,
+.cgq-modal-container :is(button, textarea, select):focus-visible {
+  outline: 2px solid var(--cgq-primary);
+  outline-offset: 2px;
+}
+
 .cgq-chevron-icon {
   transition: transform 0.2s ease;
 }

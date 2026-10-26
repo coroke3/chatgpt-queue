@@ -2603,26 +2603,46 @@
     }
 
     // Open a new chat in this tab and carry the remaining queue (with each item's tools) over to it.
-    async startNewChat(reason) {
+    async startNewChat(reason, nextItems = this.items, allowSameUrl = false) {
+      const originalItems = this.items;
+      this.commandOriginalItems = allowSameUrl ? originalItems : null;
       this.switchingChatSince = Date.now();
       this.setState(QueueState.WAITING_GENERATION, reason);
       try {
         // Store before navigating: a full page load must not lose the pending queue.
-        await chrome.storage.local.set({ [this.storageKeyQueue]: this.items });
+        await chrome.storage.local.set({ [this.storageKeyQueue]: nextItems });
         sessionStorage.setItem(SESSION_KEY_CHAT_ROLLOVER, JSON.stringify({
           sourceTabId: this.tabId,
           sourceUrl: this.currentUrl,
           targetUrl: DOM.getNewChatUrl(),
-          isPaused: this.isPaused
+          isPaused: this.isPaused,
+          allowSameUrl
         }));
+        this.items = nextItems;
+        sessionStorage.removeItem(SESSION_KEY_STALL);
+        sessionStorage.removeItem(SESSION_KEY_TIMEOUT);
         this.navigateToNewChat(DOM.getNewChatUrl());
+        return true;
       } catch (error) {
+        this.items = originalItems;
+        this.commandOriginalItems = null;
+        try { await chrome.storage.local.set({ [this.storageKeyQueue]: originalItems }); } catch {}
         this.switchingChatSince = null;
         this.chatRolloverFailed = true;
         sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
         this.isPaused = true;
         this.setState(QueueState.PAUSED, '新しいチャットを開けませんでした。キューを保持して停止しました。');
+        return false;
       }
+    }
+
+    async executeNewChat(item) {
+      const parsed = CGQComposerTools.parsePrompt(item?.text);
+      if (parsed.action !== 'newchat') return false;
+      const nextItems = this.items.slice(1);
+      if (parsed.text) nextItems.unshift({ ...item, text: parsed.text });
+      await this.startNewChat('新しいチャットを開始中...', nextItems, true);
+      return true;
     }
 
     // Delivery timed out: press the retry button if there is one; still failing after 30s (or no
@@ -2720,6 +2740,11 @@
         this.chatRolloverFailed = true;
         sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
         this.isPaused = true;
+        if (this.commandOriginalItems) {
+          this.items = this.commandOriginalItems;
+          this.commandOriginalItems = null;
+          await this.saveQueue();
+        }
         this.setState(QueueState.PAUSED, '新しいチャットを開けませんでした。キューを保持して停止しました。');
       }
       if (this.chatRolloverFailed || !DOM.getConversationLimitWarning()) return false;
@@ -2735,7 +2760,7 @@
         const target = new URL(pending.targetUrl);
         const current = new URL(this.currentUrl);
         if (current.origin !== target.origin || current.pathname !== target.pathname ||
-          this.currentUrl === pending.sourceUrl) return false;
+          (this.currentUrl === pending.sourceUrl && !pending.allowSameUrl)) return false;
         const sourceKey = `cgq_queue_${pending.sourceTabId}`;
         const result = await chrome.storage.local.get([sourceKey]);
         const items = Array.isArray(result[sourceKey]) ? result[sourceKey] : [];
@@ -3242,6 +3267,8 @@
           const item = {
             id: generateId(),
             text: clean,
+            model: options.model || null,
+            effort: options.effort || null,
             tools: CGQComposerTools.normalize(options.tools),
             createdAt: Date.now(),
           };
@@ -3405,6 +3432,16 @@
         const nextItem = this.items[0];
         this.activeItem = nextItem;
 
+        // Commands are local queue actions. Wait for generation and preserve a user's draft.
+        if (CGQComposerTools.parsePrompt(nextItem.text).action === 'newchat') {
+          if (composerTools.capture().text || composerTools.capture().tools.length) {
+            this.setState(QueueState.WAITING_GENERATION, '新しいチャットを開く前に入力欄の下書きを保存・削除してください');
+            continue;
+          }
+          await this.executeNewChat(nextItem);
+          continue;
+        }
+
         // 5. Reading & Thinking Delay (with 2-3 hour continuous operation fatigue scaling)
         const now = Date.now();
         if (!this.sessionStartTime) this.sessionStartTime = now;
@@ -3559,8 +3596,11 @@
         }
         this.draftSeen = null;
         let promptTokens;
+        let resolvedPrompt;
         try {
-          promptTokens = await composerTools.prepare(nextItem.tools || [], () =>
+          this.setState(QueueState.TYPING, 'アプリ・ツールの指定を確認中...');
+          resolvedPrompt = await composerTools.resolvePrompt(nextItem.text, nextItem.tools || []);
+          promptTokens = await composerTools.prepare(resolvedPrompt.tools, () =>
             this.isPaused || this.items[0]?.id !== nextItem.id || DOM.isGenerating());
         } catch (error) {
           this.isPaused = true;
@@ -3583,7 +3623,7 @@
 
         const typedSuccessfully = await HumanSimulator.typeText(
           inputElem,
-          nextItem.text,
+          resolvedPrompt.text,
           this.settings,
           (current, total, mode) => {
             this.progressPercent = Math.round((current / total) * 100);
@@ -3598,7 +3638,7 @@
           },
           promptTokens
         );
-        this.leftoverDraft = nextItem.text;
+        this.leftoverDraft = resolvedPrompt.text;
 
         if (!typedSuccessfully || this.isPaused || this.items.length === 0 || this.items[0].id !== nextItem.id) {
           continue;
@@ -3606,7 +3646,7 @@
         if (await this.checkConversationLimitAndStartNewChat()) continue;
 
         const selectedTools = composerTools.capture().tools;
-        if ((nextItem.tools || []).some(tool => !selectedTools.some(actual => actual.type === tool.type &&
+        if (resolvedPrompt.tools.some(tool => !selectedTools.some(actual => actual.type === tool.type &&
           (actual.id === tool.id || (tool.type === 'tool' && actual.label === tool.label))))) {
           this.isPaused = true;
           this.setState(QueueState.PAUSED, 'アプリ・ツールの指定が失われたため送信を停止しました。');
@@ -3621,7 +3661,7 @@
         let sent = false;
         this.sendingNow = true;
         try {
-          sent = await HumanSimulator.clickSend(nextItem.text);
+          sent = await HumanSimulator.clickSend(resolvedPrompt.text);
         } catch (error) {
           // Never let a send error end the loop with the prompt left in the composer.
           console.warn('[ChatGPT Queue] send failed:', error);
@@ -3640,11 +3680,11 @@
             sent = true;
           } else {
             const norm = v => String(v || '').replace(/\s+/g, ' ').trim();
-            const probe = norm(nextItem.text).slice(0, 30);
+            const probe = norm(resolvedPrompt.text).slice(0, 30);
             const latestTurn = DOM.extractLatestTurn?.();
             if (latestTurn && latestTurn.prompt && norm(latestTurn.prompt).includes(probe)) {
               sent = true;
-            } else if (!norm(DOM.getComposerText()) && this.lastSentPrompt === nextItem.text) {
+            } else if (!norm(DOM.getComposerText()) && this.lastSentPrompt === resolvedPrompt.text) {
               sent = true;
             }
           }
@@ -3655,7 +3695,7 @@
           this.leftoverDraft = null;
           this.sendFailures = 0;
           this.lastSentTimestamp = Date.now();
-          this.lastSentPrompt = nextItem.text;
+          this.lastSentPrompt = resolvedPrompt.text;
 
           // 送信完了したアイテムを即座にメモリから削除
           this.items = this.items.filter(it => it.id !== nextItem.id);
@@ -3873,6 +3913,7 @@
             <span class="cgq-panel-subtext" id="cgq-panel-subtext">回答生成完了後に自動送信</span>
           </div>
           <div class="cgq-panel-header-right">
+            <button type="button" class="cgq-panel-btn" id="cgq-btn-newchat" title="キューの末尾に新しいチャットの開始を追加" aria-label="新しいチャットをキューに追加">/newchat</button>
             <button class="cgq-panel-btn" id="cgq-btn-pause" title="キューを一時停止 / 再開">
               <svg id="cgq-icon-pause" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="4" width="4" height="16"></rect>
@@ -3932,6 +3973,10 @@
       this.domProgress = panel.querySelector('#cgq-panel-progress');
       this.domProgressBar = panel.querySelector('#cgq-panel-progress-fill');
       this.domBtnBulk = panel.querySelector('#cgq-btn-bulk');
+      panel.querySelector('#cgq-btn-newchat').onclick = e => {
+        e.stopPropagation();
+        this.qm.enqueue('/newchat');
+      };
       this.domBtnClear = panel.querySelector('#cgq-btn-clear');
       this.domBtnSettings = panel.querySelector('#cgq-btn-settings');
 
@@ -4329,19 +4374,17 @@
         return true;
       };
 
-      document.addEventListener('beforeinput', e => {
-        if (!e.isTrusted || e.isComposing || e.inputType !== 'insertText' || e.data !== '/') return;
-        const input = DOM.getPromptInput();
-        const selection = window.getSelection();
-        if (!input || !input.contains(e.target) || !selection?.rangeCount) return;
-        const range = selection.getRangeAt(0).cloneRange();
-        if (!input.contains(range.startContainer)) return;
-        range.selectNodeContents(input);
-        range.setEnd(selection.anchorNode, selection.anchorOffset);
-        if (!/(?:^|\n)\s*$/.test(range.toString())) return;
-        e.preventDefault();
-        document.execCommand('insertText', false, '@');
-      }, true);
+      // Preserve slash text so /newchat can be entered in the native composer.
+      const enqueueCommand = async e => {
+        const text = DOM.getComposerText();
+        if (CGQComposerTools.parsePrompt(text).action !== 'newchat') return false;
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        if (!this.qm.isComposerLocked()) {
+          await this.qm.enqueue(text, { tools: composerTools.capture().tools });
+          DOM.clearComposer();
+        }
+        return true;
+      };
       // 1. Enter key in composer:
       // - 初回送信 (ChatGPT idle, queue empty): 直接ChatGPTに送信
       // - 実行中 (ChatGPT generating or queue busy): キューに追加 (割り込み送信可能・不可能両対応)
@@ -4355,6 +4398,12 @@
 
         const isInputFocused = (document.activeElement === input || input.contains(document.activeElement));
         if (!isInputFocused) return;
+        const commandSubmit = e.key === 'Enter' && !e.shiftKey &&
+          (e.ctrlKey || e.metaKey || e.altKey || this.qm.settings.enterToQueue !== false);
+        if (commandSubmit && CGQComposerTools.parsePrompt(DOM.getComposerText()).action === 'newchat') {
+          await enqueueCommand(e);
+          return;
+        }
         if (composerTools.menuOpen()) return;
 
         // Ctrl + Enter or Cmd + Enter: 常に強制キュー追加
@@ -4441,6 +4490,11 @@
         );
         if (isStopBtn) return;
 
+        if (CGQComposerTools.parsePrompt(DOM.getComposerText()).action === 'newchat') {
+          await enqueueCommand(e);
+          return;
+        }
+
         if (swallowIfLocked(e)) return;
 
         if (this.isBusy()) {
@@ -4477,6 +4531,10 @@
         // キュー自身の送信（PRE_SEND中の sendBtn.click）は素通しする。
         // ここで止めると送信されず、入力欄の文字がキューに再追加されてしまう。
         if (this.qm.sendingNow) return;
+        if (CGQComposerTools.parsePrompt(DOM.getComposerText()).action === 'newchat') {
+          await enqueueCommand(e);
+          return;
+        }
         if (swallowIfLocked(e)) return;
 
         if (this.isBusy()) {
@@ -4502,7 +4560,7 @@
       const modal = document.createElement('div');
       modal.className = 'cgq-modal-overlay';
       modal.innerHTML = `
-        <div class="cgq-modal-container">
+        <div class="cgq-modal-container" role="dialog" aria-modal="true" aria-label="プロンプトの一括追加">
           <div class="cgq-modal-header">
             <span>プロンプトの一括追加 (このタブ専用)</span>
             <button class="cgq-icon-btn" id="cgq-modal-close">
@@ -4514,7 +4572,7 @@
           </div>
           <div class="cgq-modal-body">
             <div class="cgq-form-desc">
-              このタブのキューに複数のプロンプトをまとめて登録できます。
+              順番に実行します。/newchat で新しいチャットへ切り替え、@GitHub 質問 や @"Google Drive" 質問 でアプリを指定できます。/"Web search" 質問 でツールも指定できます。
             </div>
             <div class="cgq-form-group">
               <label class="cgq-form-label">区切り方式</label>
@@ -4547,8 +4605,12 @@
       modal.querySelector('#cgq-modal-close').onclick = closeModal;
       modal.querySelector('#cgq-modal-cancel').onclick = closeModal;
       modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+      modal.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && !e.isComposing) closeModal();
+      });
 
       bulkTools = CGQComposerTools.attach(modal.querySelector('#cgq-bulk-textarea'), {
+        literal: true,
         query: (marker, query) => composerTools.query(marker, query)
       });
       const textarea = modal.querySelector('#cgq-bulk-textarea');
@@ -4577,7 +4639,7 @@
       textarea.addEventListener('input', updateCount);
       delimSelect.addEventListener('change', updateCount);
       textarea.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && e.key === 'Enter') {
           e.preventDefault();
           submitBtn.click();
         }
@@ -4593,6 +4655,7 @@
           showToast('追加するプロンプトが見つかりませんでした');
         }
       };
+      textarea.focus();
     }
 
     showSettingsModal() {

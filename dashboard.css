@@ -3388,7 +3388,7 @@ body.sidebar-collapsed #view-all-grid-container .cgq-floating-sidebar-open {
 }
 
 .cgq-modal-container {
-  background: var(--bg);
+  background: var(--bg-elevated, #ffffff);
   border: 1px solid var(--border);
   border-radius: 14px;
   width: 100%;

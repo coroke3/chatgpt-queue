@@ -8,6 +8,99 @@ const warning = 'この会話は長さの上限に到達していますが、新
 const markerKey = 'cgq_chat_rollover';
 const root = path.join(__dirname, '..');
 
+test('/newchat is executed locally, then ordered prompts and settings resume in the new chat', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+  await f.queue.enqueueMany(['/newchat @GitHub Review the repository', 'Next question'], { model: 'auto', effort: 'high' });
+  let target;
+  f.queue.navigateToNewChat = url => { target = url; };
+  f.HumanSimulator.clickSend = () => assert.fail('commands must not be sent to ChatGPT');
+  f.window.__stopLoop = () => !!target;
+  await assert.rejects(f.queue.startLoop(), /TEST_STOP/);
+  assert.equal(target, 'https://chatgpt.com/');
+  assert.deepEqual(Array.from(f.queue.items, item => item.text), ['@GitHub Review the repository', 'Next question']);
+  const next = fixture(t, { url: target, data: f.data, session: {
+    cgq_tab_id: f.window.sessionStorage.getItem('cgq_tab_id'),
+    [markerKey]: f.window.sessionStorage.getItem(markerKey)
+  } });
+  await next.queue.loadFromStorage();
+  assert.equal(await next.queue.restoreConversationRollover(), true);
+  assert.deepEqual(Array.from(next.queue.items, item => item.text), ['@GitHub Review the repository', 'Next question']);
+  assert.equal(next.queue.items[0].effort, 'high');
+  assert.equal(next.queue.items[0].model, 'auto');
+});
+
+test('/newchat preserves its command on navigation failure or timeout', async t => {
+  for (const throws of [true, false]) {
+    const f = fixture(t);
+    await f.queue.enqueueMany(['/newchat', 'Keep this']);
+    f.queue.navigateToNewChat = () => { if (throws) throw new Error('navigation failed'); };
+    await f.queue.executeNewChat(f.queue.items[0]);
+    if (!throws) {
+      f.queue.switchingChatSince = Date.now() - 16000;
+      await f.queue.checkConversationLimitAndStartNewChat();
+    }
+    assert.equal(f.queue.isPaused, true);
+    assert.deepEqual(Array.from(f.queue.items, item => item.text), ['/newchat', 'Keep this']);
+    assert.deepEqual(f.data[f.queue.storageKeyQueue].map(item => item.text), ['/newchat', 'Keep this']);
+  }
+});
+
+test('/newchat on an already empty new chat restores once for both services', async t => {
+  for (const url of ['https://chatgpt.com/', 'https://gemini.google.com/app']) {
+    const f = fixture(t, { url });
+    await f.queue.enqueueMany(['/newchat', 'Question']);
+    f.queue.navigateToNewChat = target => assert.equal(target, url);
+    await f.queue.executeNewChat(f.queue.items[0]);
+    const next = fixture(t, { url, data: f.data, session: {
+      cgq_tab_id: f.window.sessionStorage.getItem('cgq_tab_id'),
+      [markerKey]: f.window.sessionStorage.getItem(markerKey)
+    } });
+    await next.queue.loadFromStorage();
+    assert.equal(await next.queue.restoreConversationRollover(), true);
+    assert.equal(await next.queue.restoreConversationRollover(), false);
+    assert.deepEqual(Array.from(next.queue.items, item => item.text), ['Question']);
+  }
+});
+
+test('/newchat waits during generation, pause, and an unsaved draft', async t => {
+  for (const state of ['generating', 'paused', 'draft']) {
+    const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+    f.queue.items = [{ id: 'command', text: '/newchat' }];
+    f.queue.isPaused = state === 'paused';
+    f.DOM.isGenerating = () => state === 'generating';
+    if (state === 'draft') f.window.document.querySelector('textarea').value = 'Unsent draft';
+    f.queue.navigateToNewChat = () => assert.fail(state);
+    await f.queue.runLoopStep();
+    assert.equal(f.queue.items[0].text, '/newchat');
+    if (state === 'draft') assert.equal(f.window.document.querySelector('textarea').value, 'Unsent draft');
+  }
+});
+
+test('plain text app requests select real tools and confirm the stripped prompt on send', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+  await f.queue.enqueueMany(['@GitHub Review this', '@"Google Drive" Summarize']);
+  const app = { platform: 'chatgpt', type: 'app', id: 'app://real-github', label: 'GitHub' };
+  f.composerTools.query = async (marker, label) => { assert.equal(marker, '@'); assert.equal(label, 'GitHub'); return [app]; };
+  f.composerTools.prepare = async tools => { assert.equal(tools[0].id, app.id); return []; };
+  let sent = false;
+  f.HumanSimulator.typeText = async (input, text) => { assert.equal(text, 'Review this'); input.value = text; return true; };
+  f.composerTools.capture = () => ({ text: '', tools: [app] });
+  f.HumanSimulator.clickSend = async text => { assert.equal(text, 'Review this'); sent = true; return true; };
+  f.window.__stopLoop = () => sent;
+  await assert.rejects(f.queue.startLoop(), /TEST_STOP/);
+  assert.equal(f.queue.items[0].text, '@"Google Drive" Summarize');
+});
+
+test('an unavailable text app request pauses without typing or losing the item', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+  await f.queue.enqueue('@MissingApp Question');
+  f.composerTools.query = async () => [];
+  f.HumanSimulator.typeText = () => assert.fail('must not type without requested app');
+  await f.queue.runLoopStep();
+  assert.equal(f.queue.isPaused, true);
+  assert.equal(f.queue.items[0].text, '@MissingApp Question');
+});
+
 function fixture(t, { url = 'https://chatgpt.com/c/old-chat', html = '', data = {}, session = {} } = {}) {
   const dom = new JSDOM(`<!doctype html><body><main>${html}</main></body>`, {
     url, runScripts: 'outside-only', pretendToBeVisual: true
@@ -26,12 +119,12 @@ function fixture(t, { url = 'https://chatgpt.com/c/old-chat', html = '', data = 
     .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
       'const sleep = async () => { if (globalThis.__stopLoop?.()) throw new Error("TEST_STOP"); };')
     .replace('  const queueManager = new QueueManager();',
-      '  globalThis.__test = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();'));
-  const { QueueManager, DOM, HumanSimulator } = window.__test;
+      '  globalThis.__test = { QueueManager, DOM, HumanSimulator, composerTools }; return;\n  const queueManager = new QueueManager();'));
+  const { QueueManager, DOM, HumanSimulator, composerTools } = window.__test;
   const queue = new QueueManager();
   queue.notify = () => {};
   Object.assign(queue.settings, { minReadDelay: 0, maxReadDelay: 0, autoScroll: false, soundNotification: false });
-  return { window, queue, DOM, HumanSimulator, data };
+  return { window, queue, DOM, HumanSimulator, composerTools, data };
 }
 
 test('detects Japanese and English limit notices, including split text and portal alerts', t => {

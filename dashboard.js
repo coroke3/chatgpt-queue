@@ -3223,6 +3223,19 @@ a{color:inherit}
   const bulkCloseBtn = document.getElementById('bulk-modal-close');
   const singleBulkAddBtn = document.getElementById('single-btn-bulk-add');
   const navBulkAdd = document.getElementById('nav-bulk-add');
+  const bulkToolInput = CGQComposerTools.attach(bulkTextarea, {
+    literal: true,
+    scope: () => bulkTargetSelect?.value || 'bulk',
+    query: (marker, query) => {
+      if (bulkTargetSelect?.value === '__ALL__') throw new Error('候補の取得先を1つ選んでください。文字列の指定は全タブでも使えます。');
+      return queryComposerOptions(bulkTargetSelect?.value, marker, query);
+    }
+  });
+  document.getElementById('single-btn-newchat')?.addEventListener('click', () => {
+    if (selectedTabId && sendRemoteCommand(selectedTabId, { action: 'ENQUEUE', text: '/newchat' })) {
+      showToast('新しいチャットの開始をキューに追加しました');
+    }
+  });
 
   function getBulkPrompts() {
     if (!bulkTextarea || !bulkDelimSelect) return [];
@@ -3265,6 +3278,7 @@ a{color:inherit}
   }
 
   function closeBulkModal() {
+    bulkToolInput.close();
     if (bulkModal) bulkModal.style.display = 'none';
   }
 
@@ -3286,6 +3300,9 @@ a{color:inherit}
   if (bulkCloseBtn) bulkCloseBtn.addEventListener('click', closeBulkModal);
   if (bulkCancelBtn) bulkCancelBtn.addEventListener('click', closeBulkModal);
   if (bulkModal) {
+    bulkModal.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !e.isComposing) closeBulkModal();
+    });
     bulkModal.addEventListener('click', (e) => {
       if (e.target === bulkModal) closeBulkModal();
     });
@@ -3294,7 +3311,7 @@ a{color:inherit}
   if (bulkTextarea) {
     bulkTextarea.addEventListener('input', updateBulkCounter);
     bulkTextarea.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         bulkSubmitBtn?.click();
       }

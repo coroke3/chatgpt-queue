@@ -274,6 +274,7 @@
                 <select id="single-effort-select" style="display: none;"></select>
 
                 <!-- Bulk Add Button (1 prompt per line) -->
+                <button type="button" class="cgq-chatgpt-pill-btn" id="single-btn-newchat" title="キューの末尾に新しいチャットの開始を追加">/newchat</button>
                 <button type="button" class="cgq-chatgpt-pill-btn cgq-icon-only" id="single-btn-bulk-add" title="プロンプトを一括追加 (1行1プロンプト)" aria-label="プロンプトを一括追加">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <line x1="8" y1="6" x2="21" y2="6"></line>
@@ -689,7 +690,7 @@
 
   <!-- Bulk Prompt Insertion Modal (1 prompt per line) -->
   <div class="cgq-modal-overlay" id="dashboard-bulk-modal" style="display: none;">
-    <div class="cgq-modal-container">
+    <div class="cgq-modal-container" role="dialog" aria-modal="true" aria-label="プロンプトの一括追加">
       <div class="cgq-modal-header">
         <span>プロンプトの一括追加（1行1プロンプト）</span>
         <button type="button" class="cgq-icon-btn" id="bulk-modal-close" title="閉じる">
@@ -701,7 +702,7 @@
       </div>
       <div class="cgq-modal-body">
         <div style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">
-          改行で区切られたプロンプトを1行ずつ個別のキューアイテムとして一括登録します。
+          順番に実行します。/newchat で新しいチャットへ切り替えます。各プロンプトの先頭に @GitHub や @"Google Drive" を付けるとアプリ、/"Web search" を付けるとツールを指定できます。
         </div>
         <div style="display: flex; flex-direction: column; gap: 6px;">
           <label style="font-size: 12px; font-weight: 600; color: var(--text);">追加対象のタブ</label>

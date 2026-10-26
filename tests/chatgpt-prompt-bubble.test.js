@@ -6,7 +6,7 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 const root = path.join(__dirname, '..');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function bootContent({ platform = 'chatgpt' } = {}) {
+async function bootContent({ platform = 'chatgpt' } = {}) {
   const errors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error.message));
@@ -35,6 +35,7 @@ function bootContent({ platform = 'chatgpt' } = {}) {
   window.eval(fs.readFileSync(path.join(root, 'model-picker.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(root, 'content.js'), 'utf8'));
+  await tick(); await tick();
   return { dom, window, doc: window.document };
 }
 
@@ -74,7 +75,7 @@ async function bootDashboard({ tabs = [], snapshots = {}, registry = {} } = {}) 
 }
 
 test('ChatGPT multi-turn conversation extraction pairs prompts and answers 1-to-1', async t => {
-  const f = bootContent({ platform: 'chatgpt' });
+  const f = await bootContent({ platform: 'chatgpt' });
   t.after(() => f.dom.window.close());
 
   const conversationHtml = `
@@ -120,7 +121,7 @@ test('ChatGPT multi-turn conversation extraction pairs prompts and answers 1-to-
 });
 
 test('ChatGPT active streaming pairs prompt with stream text on latest turn', async t => {
-  const f = bootContent({ platform: 'chatgpt' });
+  const f = await bootContent({ platform: 'chatgpt' });
   t.after(() => f.dom.window.close());
 
   // Simulate generating
@@ -264,7 +265,7 @@ test('Queue Manager renders Gemini user prompts in the same chat bubble design',
 });
 
 test('ChatGPT modern DOM without data-testid pairs multi-turn conversations and ignores toolbar buttons', async t => {
-  const f = bootContent({ platform: 'chatgpt' });
+  const f = await bootContent({ platform: 'chatgpt' });
   t.after(() => f.dom.window.close());
 
   // Realistic modern ChatGPT DOM without data-testid="conversation-turn-X"
@@ -358,7 +359,7 @@ test('ChatGPT modern DOM without data-testid pairs multi-turn conversations and 
 });
 
 test('ChatGPT regenerated answers update the turn answer instead of creating orphan turns', async t => {
-  const f = bootContent({ platform: 'chatgpt' });
+  const f = await bootContent({ platform: 'chatgpt' });
   t.after(() => f.dom.window.close());
 
   // Turn 1 User + Original Assistant response followed by Regenerated Assistant response
@@ -516,8 +517,8 @@ test('Queue Manager displays and allows selecting individual chat indicators whe
   assert.equal(f.doc.getElementById('single-chat-title').textContent, 'ChatGPT タスク');
 });
 
-test('cleanUserPrompt preserves intentional repetitive text and only removes genuine duplicate halves', t => {
-  const f = bootContent({ platform: 'chatgpt' });
+test('cleanUserPrompt preserves intentional repetitive text and only removes genuine duplicate halves', async t => {
+  const f = await bootContent({ platform: 'chatgpt' });
   t.after(() => f.dom.window.close());
 
   const div = f.doc.createElement('div');

@@ -23,6 +23,23 @@
     });
   };
 
+  // Prefix directives work in plain text (including pasted batches). Quoting permits spaces.
+  // Only prefixes are interpreted: emails, URLs, code, and mentions in the body stay literal.
+  function parsePrompt(value) {
+    let body = String(value || '').trim();
+    const command = body.match(/^\/newchat(?=\s|$)\s*/i);
+    if (command) return { action: 'newchat', text: body.slice(command[0].length), requests: [] };
+    const requests = [];
+    while (body) {
+      const match = body.match(/^([@/])(?:"([^"\n]+)"|\[([^\]\n]+)\]|([^\s@/]+))(?=\s|$)\s*/);
+      if (!match) break;
+      requests.push({ marker: match[1], label: match[2] || match[3] || match[4] });
+      body = body.slice(match[0].length);
+    }
+    // A lone mention is ordinary text; a tool request must have a prompt to send.
+    return requests.length && body ? { text: body, requests } : { text: String(value || '').trim(), requests: [] };
+  }
+
   class NativeTools {
     constructor(platform, { doc = document, getInput, setText, wait = ms => new Promise(r => setTimeout(r, ms)), isVisible } = {}) {
       this.platform = platform;
@@ -223,10 +240,24 @@
       });
       return selectedNodes;
     }
+
+    async resolvePrompt(value, values = []) {
+      const parsed = parsePrompt(value);
+      let tools = normalize(values);
+      if (Array.isArray(values) && tools.length !== values.length) throw new Error('保存されたアプリ・ツール指定を読み取れません。');
+      if (parsed.requests.length > 20) throw new Error('アプリ・ツールの指定は20件以内にしてください。');
+      for (const request of parsed.requests) {
+        const candidates = await this.query(request.marker, request.label);
+        const matches = candidates.filter(tool => tool.label.toLocaleLowerCase() === request.label.toLocaleLowerCase());
+        if (matches.length !== 1) throw new Error(`${request.marker}${request.label} を一意に選択できません。アプリ・ツール名を確認してください。`);
+        tools = normalize([...tools, matches[0]]);
+      }
+      return { text: parsed.text, tools };
+    }
   }
 
   // Shared autocomplete for Queue Manager and the bulk queue editor.
-  function attach(input, { query, scope = () => 'draft', drafts = new Map(), onError = () => {} }) {
+  function attach(input, { query, scope = () => 'draft', drafts = new Map(), onError = () => {}, literal = false }) {
     if (!input) return { getTools: () => [], sync: () => {}, close: () => {}, clear: () => {}, destroy: () => {} };
 
     // Clean up previous attachment if it exists on this input
@@ -269,6 +300,27 @@
     };
     const choose = tool => {
       if (!match) return;
+      if (tool.type === 'command') {
+        const end = input.selectionStart;
+        input.value = input.value.slice(0, match.start) + '/newchat ' + input.value.slice(end);
+        input.setSelectionRange(match.start + 9, match.start + 9);
+        close();
+        input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+        input.focus();
+        return;
+      }
+      if (literal) {
+        const prefix = tool.type === 'app' ? '@' : '/';
+        const label = /\s/.test(tool.label) ? `"${tool.label}"` : tool.label;
+        const insertion = prefix + label + ' ';
+        const end = input.selectionStart;
+        input.value = input.value.slice(0, match.start) + insertion + input.value.slice(end);
+        input.setSelectionRange(match.start + insertion.length, match.start + insertion.length);
+        close();
+        input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+        input.focus();
+        return;
+      }
       let values = getTools();
       values = values.filter(item => item.id !== tool.id && item.label.toLowerCase() !== tool.label.toLowerCase());
       if (tool.type === 'tool') {
@@ -300,14 +352,19 @@
       if (!found) return close();
       match = { start: before.length - found[1].length - found[2].length, marker: found[1], query: found[2] };
       const ticket = ++sequence, key = scope(); options = []; index = 0;
-      menu.hidden = false; input.setAttribute('aria-expanded', 'true'); render('候補を確認中…');
+      const command = match.marker === '/' && 'newchat'.startsWith(match.query.toLowerCase())
+        ? [{ type: 'command', label: 'newchat' }] : [];
+      options = command;
+      menu.hidden = false; input.setAttribute('aria-expanded', 'true'); render(command.length ? '' : '候補を確認中…');
+      if (match.query.toLowerCase() === 'newchat' && match.marker === '/') return;
       timer = setTimeout(async () => {
         try {
           const result = await query(match.marker, match.query);
           if (sequence !== ticket || scope() !== key || !input.isConnected) return;
-          options = normalize(result); render(options.length ? '' : '利用できる候補がありません');
+          options = [...command, ...normalize(result)]; render(options.length ? '' : '利用できる候補がありません');
         } catch (error) {
           if (sequence !== ticket || scope() !== key) return;
+          options = command;
           render(error.message || '候補を取得できませんでした'); onError(error);
         }
       }, 280);
@@ -317,6 +374,7 @@
     const onCompositionEnd = () => update();
     const onKeyDown = event => {
       if (event.isComposing || event.keyCode === 229 || menu.hidden) return;
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey || event.altKey)) { close(); return; }
       if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
         event.preventDefault(); event.stopImmediatePropagation();
         if (event.key === 'Escape') close();
@@ -399,7 +457,7 @@
     return [...current, ...extra];
   }
 
-  const api = { NativeTools, normalize, attach, remember, recall, mergeOptions };
+  const api = { NativeTools, normalize, parsePrompt, attach, remember, recall, mergeOptions };
   globalThis.CGQComposerTools = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();
