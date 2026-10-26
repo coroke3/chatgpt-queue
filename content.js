@@ -182,6 +182,31 @@
     return null;
   };
   const $$v = selector => Array.from(document.querySelectorAll(selector)).filter(isShown);
+  // Rich answers (anything Markdown cannot show) are also copied as snapshots for the Queue Manager
+  // (snapshot.js). Keys are per turn; the page elements are kept to replay actions from the Queue Manager.
+  const SNAP_PREFIX = 'cgq_snap_';
+  const snapRoots = new Map(); // snapKey -> [answer root elements]
+  const BASIC_COMPONENTS = ['title', 'text', 'code', 'list', 'list-item', 'table', 'table-row', 'table-cell', 'blockquote', 'divider', 'icon'];
+  const RICH_ANSWER = IS_GEMINI
+    ? 'canvas, iframe, video, info-card, rich-list-card, map-location-reference-link-block, image-gallery, img:not([src^="data:"]):not([width="16"])'
+    : `[data-d-component]${BASIC_COMPONENTS.map(c => `:not([data-d-component="${c}"])`).join('')}, canvas, iframe, video`;
+  const isRich = root => !!root && (root.matches(RICH_ANSWER) || !!root.querySelector(RICH_ANSWER));
+  const rememberSnapRoots = (key, roots) => {
+    const list = roots.filter(Boolean);
+    if (key && list.some(isRich)) { snapRoots.set(key, list); return true; }
+    snapRoots.delete(key);
+    return false;
+  };
+  // Cheap fingerprint of what a snapshot would show: text, structure and control states.
+  const snapSignature = root => [
+    root.textContent.length,
+    root.getElementsByTagName('*').length,
+    root.querySelectorAll('[aria-checked="true"], [aria-pressed="true"], [aria-selected="true"], [aria-expanded="true"], ' +
+      '[data-state="checked"], [data-state="on"], [data-state="open"], [data-state="active"]').length,
+    Array.from(root.querySelectorAll('input, textarea, select'), el => el.value).join('\u0001'),
+    Array.from(root.querySelectorAll('img'), img => img.complete ? 1 : 0).join('')
+  ].join(':');
+
   const setProgress = (track, fill, visible, percent) => {
     if (!track || !fill) return;
     if (visible && !track.classList.contains('is-visible')) {
@@ -1550,12 +1575,16 @@
 
             if (uText || aText) {
               const choices = mNode ? DOM.extractChoices(mNode) : [];
+              const snapKey = `m${i}`;
+              const snapRoot = mNode && (mNode.querySelector('structured-content-container') || mNode.querySelector('message-content') || mNode);
+              const snap = rememberSnapRoots(snapKey, [snapRoot]);
               list.push({
                 turn: i + 1,
                 prompt: uText,
                 answer: aText,
                 isStreaming: isStreaming,
-                ...(choices.length ? { choices } : {})
+                ...(choices.length ? { choices } : {}),
+                ...(snap ? { snapKey } : {})
               });
             }
           }
@@ -1639,13 +1668,19 @@
               if (uText || aText) {
                 const choices = DOM.extractChoices(turn);
                 const thinking = DOM.getThinking(turn);
+                // The answer's own Markdown roots (not the unit wrapper with its heading and buttons).
+                const markdownRoots = roots.flatMap(r => r.matches('[class*="MarkdownRoot"]') ? [r] :
+                  Array.from(r.querySelectorAll('[class*="MarkdownRoot"]')).filter(m => !m.parentElement.closest('[class*="MarkdownRoot"]') && !DOM.inThinking(m)));
+                const snapKey = turn.getAttribute('data-turn-key') || `t${i}`;
+                const snap = rememberSnapRoots(snapKey, markdownRoots.length ? markdownRoots : roots);
                 list.push({
                   turn: i + 1,
                   prompt: uText,
                   answer: aText,
                   isStreaming: isStreaming,
                   ...(choices.length ? { choices } : {}),
-                  ...(thinking ? { thinking } : {})
+                  ...(thinking ? { thinking } : {}),
+                  ...(snap ? { snapKey } : {})
                 });
               }
             }
@@ -2919,6 +2954,54 @@
       });
     }
 
+    // Write the snapshot of each rich turn that changed (at most every 1.5s per turn while it streams),
+    // each under its own key so only that turn is rewritten; drop snapshots of turns no longer listed.
+    async syncSnapshots(history) {
+      if (typeof CGQSnapshot === 'undefined' || !this.tabId) return;
+      this.snapState = this.snapState || new Map();
+      const now = Date.now();
+      const live = new Set();
+      const writes = {};
+      for (const qa of history) {
+        const roots = qa.snapKey && snapRoots.get(qa.snapKey);
+        if (!roots || !roots.every(r => r.isConnected)) continue;
+        live.add(qa.snapKey);
+        const sig = roots.map(snapSignature).join('|');
+        const prev = this.snapState.get(qa.snapKey);
+        if (prev && (prev.sig === sig || now - prev.at < 1500)) continue;
+        const parts = roots.map((r, i) => CGQSnapshot.snapshot(r, { prefix: `k${i}_`, path: String(i) }));
+        this.snapState.set(qa.snapKey, { sig: parts.some(p => p.pending) ? '' : sig, at: now });
+        writes[`${SNAP_PREFIX}${this.tabId}_${qa.snapKey}`] = {
+          html: parts.map(p => p.html).join(''), css: parts.map(p => p.css).join('\n'), at: now
+        };
+      }
+      let stale = [...this.snapState.keys()].filter(k => !live.has(k)).map(k => `${SNAP_PREFIX}${this.tabId}_${k}`);
+      for (const k of this.snapState.keys()) if (!live.has(k)) this.snapState.delete(k);
+      if (!this.snapCleaned) {
+        // Snapshots left by this tab's previous page load
+        this.snapCleaned = true;
+        const all = await chrome.storage.local.get(null);
+        stale = stale.concat(Object.keys(all).filter(k => k.startsWith(`${SNAP_PREFIX}${this.tabId}_`) &&
+          !live.has(k.slice(`${SNAP_PREFIX}${this.tabId}_`.length))));
+      }
+      if (Object.keys(writes).length) await chrome.storage.local.set(writes);
+      if (stale.length) await chrome.storage.local.remove(stale);
+    }
+
+    // A click or a value from a snapshot in the Queue Manager, replayed on the page.
+    answerAction(cmd) {
+      const roots = snapRoots.get(cmd.key) || [];
+      const [rootIndex, ...rest] = String(cmd.path || '').split('.');
+      const root = roots[Number(rootIndex)];
+      const el = root && CGQSnapshot.resolve(root, ['0', ...rest].join('.'));
+      const ok = CGQSnapshot.act(el, cmd);
+      if (!ok) showToast('この操作はページに反映できませんでした');
+      this.snapState?.delete(cmd.key); // take a fresh snapshot right away
+      setTimeout(() => this.reportToRegistry(), 300);
+      setTimeout(() => this.reportToRegistry(), 1200);
+      return ok;
+    }
+
     async reportToRegistry() {
       try {
         const result = await chrome.storage.local.get([STORAGE_KEY_REGISTRY]);
@@ -3050,6 +3133,7 @@
         }
 
         await chrome.storage.local.set({ [STORAGE_KEY_REGISTRY]: reg });
+        this.syncSnapshots(mergedQA).catch(e => console.warn('[ChatGPT Queue] snapshot failed:', e));
         return reg[this.tabId];
       } catch (e) { return null; }
     }
@@ -3067,6 +3151,8 @@
         this.removeItem(cmd.id);
       } else if (cmd.action === 'MOVE_ITEM') {
         this.moveItem(cmd.id, cmd.direction);
+      } else if (cmd.action === 'ANSWER_ACTION') {
+        this.answerAction(cmd);
       } else if (cmd.action === 'SKIP_THINKING') {
         showToast(DOM.skipThinking() ? '思考をスキップしました' : 'スキップできる思考はありません');
       } else if (cmd.action === 'CHOOSE_OPTION') {

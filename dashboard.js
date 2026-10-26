@@ -1474,6 +1474,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const isInitial = !singleAnswersArea.dataset.ansSig;
       singleAnswersArea.dataset.ansSig = ansSig;
       singleAnswersArea.innerHTML = buildSingleAnswersHtml(t);
+      hydrateSnapshots(singleAnswersArea);
       bindCodeBlockCopy(singleAnswersArea);
       bindSingleAnswersEvents();
       renderMermaidDiagrams(singleAnswersArea);
@@ -2408,6 +2409,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (resView) {
         const isNearBottom = resView.scrollHeight - resView.scrollTop - resView.clientHeight < 100;
         resView.innerHTML = buildResultsHtml(t);
+        hydrateSnapshots(resView);
         bindCodeBlockCopy(resView);
         bindGridHistoryEvents(card, tid);
         renderMermaidDiagrams(resView);
@@ -2554,6 +2556,73 @@ document.addEventListener('DOMContentLoaded', () => {
     return turns.map(qa => buildTurnHtml(qa, t, qa === turns[turns.length - 1], 'card')).join('');
   }
 
+  // Snapshots of rich answers (content.js / snapshot.js): the page's own rendering with its computed
+  // styles, shown in a shadow root so neither side's CSS leaks. Clicks and values go back to the page,
+  // whose next snapshot shows the result. Hosts are reused while their snapshot is unchanged, so
+  // re-rendering a card does not reload images, maps or charts.
+  const SNAP_PREFIX = 'cgq_snap_';
+  const snapshots = new Map(); // storage key -> { html, css, at }
+  const snapHosts = new Map(); // storage key -> { at, host }
+  const snapStorageKey = (t, key) => `${SNAP_PREFIX}${t.tabId}_${key}`;
+  const snapFor = (t, qa) => (qa.snapKey && snapshots.get(snapStorageKey(t, qa.snapKey))) || null;
+  const SNAP_BASE_CSS = `:host{display:block;max-width:100%;overflow-wrap:anywhere}
+*,*::before,*::after{box-sizing:border-box}
+img,svg,video,canvas,iframe{max-width:100%}
+a{color:inherit}
+[data-cgq-act]{cursor:pointer}
+[data-cgq-act].cgq-sent{opacity:.55;transition:opacity .2s ease}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}`;
+
+  function snapshotHost(storageKey, tabId, key) {
+    const snap = snapshots.get(storageKey);
+    const cached = snapHosts.get(storageKey);
+    if (cached && cached.at === snap.at) return cached.host;
+    const host = document.createElement('div');
+    host.className = 'cgq-snap-host';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `<style>${SNAP_BASE_CSS}\n${snap.css}</style>${snap.html}`;
+    const send = (el, extra) => {
+      if (sendRemoteCommand(tabId, { action: 'ANSWER_ACTION', key, path: el.dataset.cgqAct, ...extra })) {
+        el.classList.add('cgq-sent');
+      }
+    };
+    shadow.addEventListener('click', e => {
+      const target = e.target instanceof Element ? e.target : null;
+      const actEl = target?.closest('[data-cgq-act]');
+      const link = target?.closest('a[href]');
+      if (link && /^https?:/i.test(link.getAttribute('href') || '') && (!actEl || actEl === link)) {
+        e.preventDefault();
+        window.open(link.href, '_blank', 'noopener');
+        return;
+      }
+      if (!actEl || actEl.matches('input, textarea, select')) return;
+      e.preventDefault();
+      send(actEl, { kind: 'click' });
+    });
+    shadow.addEventListener('change', e => {
+      const el = e.target instanceof Element ? e.target.closest('[data-cgq-act]') : null;
+      if (!el) return;
+      send(el, el.type === 'checkbox' || el.type === 'radio' ? { kind: 'click' } : { kind: 'value', value: el.value });
+    });
+    snapHosts.set(storageKey, { at: snap.at, host });
+    return host;
+  }
+
+  function hydrateSnapshots(container) {
+    container?.querySelectorAll('.cgq-snap[data-snap-key]').forEach(slot => {
+      const storageKey = slot.dataset.snapKey;
+      if (!snapshots.has(storageKey)) return;
+      slot.replaceWith(snapshotHost(storageKey, slot.dataset.tabId, slot.dataset.key));
+    });
+  }
+
+  function loadSnapshots() {
+    chrome.storage.local.get(null).then(all => {
+      for (const [k, v] of Object.entries(all || {})) if (k.startsWith(SNAP_PREFIX) && v?.html) snapshots.set(k, v);
+      updateDashboard();
+    }).catch(() => {});
+  }
+
   // ChatGPT's activity block (measured 2026-10): a header line that shimmers while it works
   // (「思考中」 / 「3件のサイトを検索中」, later 「1m 27s考えました」), a chevron that opens the log of
   // step titles and notes, and 「スキップ」 while it is still thinking. Opening and closing follows the
@@ -2617,10 +2686,11 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>` : ''}
         ${buildActivityBlock(qa, t, pending)}
         <div class="cgq-answer-markdown">
-          ${qa.answer ? formatMarkdown(qa.answer) : qa.thinking ? '' : pending ? '<span class="cgq-busy-dot" role="status" aria-label="応答中"></span>' : '<p class="cgq-answer-pending">（回答なし）</p>'}
+          ${snapFor(t, qa) ? `<div class="cgq-snap" data-snap-key="${escapeHtml(snapStorageKey(t, qa.snapKey))}" data-tab-id="${escapeHtml(String(t.tabId))}" data-key="${escapeHtml(qa.snapKey)}"></div>` :
+            qa.answer ? formatMarkdown(qa.answer) : qa.thinking ? '' : pending ? '<span class="cgq-busy-dot" role="status" aria-label="応答中"></span>' : '<p class="cgq-answer-pending">（回答なし）</p>'}
         </div>
         ${pending && qa.progress?.notice ? `<div class="cgq-thinking-notice">${escapeHtml(qa.progress.notice)}</div>` : ''}
-        ${buildChoicesHtml(qa, t)}
+        ${snapFor(t, qa) ? '' : buildChoicesHtml(qa, t)}
         ${qa.answer && !qa.isStreaming ? `
           <div class="cgq-turn-actions">
             <button class="cgq-turn-btn btn-copy-turn" data-text="${escapeHtml(qa.answer)}" title="コピー" aria-label="コピー">
@@ -2680,7 +2750,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function getAnswerSig(t) {
     const turns = getUnifiedTurns(t);
     const a = t.latestAnswer || {};
-    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}:${choiceSig(tr)}:${tr.thinking?.label || ''}:${tr.thinking?.log?.length || 0}:${tr.thinking?.active ? 1 : 0}:${tr.thinking?.expanded ? 1 : 0}`).join('|');
+    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}:${choiceSig(tr)}:${tr.thinking?.label || ''}:${tr.thinking?.log?.length || 0}:${tr.thinking?.active ? 1 : 0}:${tr.thinking?.expanded ? 1 : 0}:${snapFor(t, tr)?.at || 0}`).join('|');
     const last = turns.length > 0 ? turns[turns.length - 1] : {};
     return `${t.tabId}::${!!t.needsConnection}::${turns.length}::${singleChatHistoryMode}::${a.isStreaming ? '1' : '0'}::${turnSummary}::${last.answer || ''}::${last.prompt || ''}::${last.progress?.label || ''}|${last.progress?.notice || ''}`;
   }
@@ -2688,7 +2758,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function getCardAnswerSig(t) {
     const turns = getUnifiedTurns(t);
     const a = t.latestAnswer || {};
-    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}:${choiceSig(tr)}:${tr.thinking?.label || ''}:${tr.thinking?.log?.length || 0}:${tr.thinking?.active ? 1 : 0}:${tr.thinking?.expanded ? 1 : 0}`).join('|');
+    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}:${choiceSig(tr)}:${tr.thinking?.label || ''}:${tr.thinking?.log?.length || 0}:${tr.thinking?.active ? 1 : 0}:${tr.thinking?.expanded ? 1 : 0}:${snapFor(t, tr)?.at || 0}`).join('|');
     const last = turns.length > 0 ? turns[turns.length - 1] : {};
     return `${t.tabId}::${!!t.needsConnection}::${turns.length}::${a.isStreaming ? '1' : '0'}::${turnSummary}::${last.answer || ''}::${last.prompt || ''}::${last.progress?.label || ''}|${last.progress?.notice || ''}`;
   }
@@ -3264,8 +3334,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local') {
+      let snapChanged = false;
+      for (const [k, change] of Object.entries(changes)) {
+        if (!k.startsWith(SNAP_PREFIX)) continue;
+        snapChanged = true;
+        if (change.newValue?.html) snapshots.set(k, change.newValue);
+        else { snapshots.delete(k); snapHosts.delete(k); }
+      }
       if (changes[STORAGE_KEY_REGISTRY]) {
         currentRegistry = changes[STORAGE_KEY_REGISTRY].newValue || {};
+        updateDashboard();
+      } else if (snapChanged) {
         updateDashboard();
       }
       if (changes[STORAGE_KEY_SETTINGS]) {
@@ -3277,5 +3356,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  loadSnapshots();
   setInterval(refreshDashboard, 1500);
 });
