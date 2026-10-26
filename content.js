@@ -251,9 +251,16 @@
       }
       return (
         document.querySelector('button[data-testid="send-button"]') ||
+        document.querySelector('button[data-testid="fruitjuice-send-button"]') ||
+        document.querySelector('button[data-testid*="send" i]') ||
+        document.querySelector('#composer-submit-button button') ||
         document.querySelector('#composer-submit-button') ||
+        document.querySelector('button[aria-label*="Send prompt" i]') ||
+        document.querySelector('button[aria-label*="プロンプトを送信" i]') ||
+        document.querySelector('button[aria-label*="メッセージを送信" i]') ||
         document.querySelector('button[aria-label*="Send" i]') ||
-        document.querySelector('button[aria-label*="送信"]')
+        document.querySelector('button[aria-label*="送信" i]') ||
+        document.querySelector('form button[type="submit"]')
       );
     },
 
@@ -1699,10 +1706,28 @@
       return true;
     }
 
+    static dispatchEvent(element, eventType, detail = {}) {
+      if (!element) return;
+      const win = element.ownerDocument?.defaultView || window;
+      try {
+        const ev = new win.Event(eventType, { bubbles: true, cancelable: true, ...detail });
+        element.dispatchEvent(ev);
+      } catch (e) {
+        try {
+          const ev = (element.ownerDocument || document).createEvent('Event');
+          ev.initEvent(eventType, true, true);
+          element.dispatchEvent(ev);
+        } catch (err) {}
+      }
+    }
+
     static setDOMContent(element, text, tokens = []) {
+      if (!element) return;
+      const win = element.ownerDocument?.defaultView || window;
+
       if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
         const nativeSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLTextAreaElement.prototype,
+          win.HTMLTextAreaElement?.prototype || window.HTMLTextAreaElement.prototype,
           'value'
         )?.set;
         if (nativeSetter) {
@@ -1710,11 +1735,39 @@
         } else {
           element.value = text;
         }
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
+        HumanSimulator.dispatchEvent(element, 'input');
+        HumanSimulator.dispatchEvent(element, 'change');
         return;
       }
 
+      element.focus();
+
+      // 1. Try document.execCommand('insertText') which triggers native ProseMirror / Lexical / React transactions
+      let execWorked = false;
+      try {
+        const doc = element.ownerDocument || document;
+        if (typeof doc.execCommand === 'function') {
+          const sel = win.getSelection?.() || window.getSelection();
+          if (sel) {
+            const range = doc.createRange();
+            range.selectNodeContents(element);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+          execWorked = doc.execCommand('insertText', false, text);
+        }
+      } catch (e) {
+        execWorked = false;
+      }
+
+      // If execCommand succeeded and element contains text, notify and return
+      if (execWorked && (element.innerText || element.textContent || '').trim().length > 0) {
+        HumanSimulator.dispatchEvent(element, 'input');
+        HumanSimulator.dispatchEvent(element, 'change');
+        return;
+      }
+
+      // 2. Fallback / JSDOM / rich mention tokens: DOM reconstruction
       const uniqueTokens = [];
       const seenTokenKeys = new Set();
       for (const token of tokens) {
@@ -1729,22 +1782,23 @@
         }
       }
 
+      const doc = element.ownerDocument || document;
       element.replaceChildren();
       text.split('\n').forEach((line, index) => {
-        const p = document.createElement('p');
+        const p = doc.createElement('p');
         p.setAttribute('dir', 'auto');
         if (index === 0) for (const token of uniqueTokens) {
-          p.append(token.cloneNode(true), document.createTextNode(' '));
+          p.append(token.cloneNode(true), doc.createTextNode(' '));
         }
-        if (line) p.appendChild(document.createTextNode(line));
-        else if (!p.childNodes.length) p.appendChild(document.createElement('br'));
+        if (line) p.appendChild(doc.createTextNode(line));
+        else if (!p.childNodes.length) p.appendChild(doc.createElement('br'));
         element.appendChild(p);
       });
 
       try {
-        const sel = window.getSelection();
+        const sel = win.getSelection?.() || window.getSelection();
         if (sel) {
-          const range = document.createRange();
+          const range = doc.createRange();
           range.selectNodeContents(element);
           range.collapse(false);
           sel.removeAllRanges();
@@ -1752,14 +1806,26 @@
         }
       } catch (e) {}
 
-      element.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: text
-      }));
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
+      try {
+        const InputEventClass = win.InputEvent || window.InputEvent;
+        if (InputEventClass) {
+          element.dispatchEvent(new InputEventClass('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: text
+          }));
+          element.dispatchEvent(new InputEventClass('input', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: text
+          }));
+        }
+      } catch (e) {}
+
+      HumanSimulator.dispatchEvent(element, 'input');
+      HumanSimulator.dispatchEvent(element, 'change');
     }
 
     static userNodes() {
@@ -1791,7 +1857,7 @@
 
         // 2. Stop button or rect appeared -> definitely generating!
         const sendBtn = DOM.getSendButton();
-        if (sendBtn && (sendBtn.matches?.('button[data-testid*="stop" i], button[aria-label*="Stop" i], button[aria-label*="停止" i], button[aria-label*="中断" i]') || sendBtn.querySelector?.('rect'))) {
+        if (sendBtn && (sendBtn.matches?.('button[data-testid*="stop" i], button[aria-label*="Stop" i], button[aria-label*="停止" i], button[aria-label*="中断" i], button[aria-label*="ストップ" i]') || sendBtn.querySelector?.('rect'))) {
           return true;
         }
 
@@ -1803,60 +1869,121 @@
           if (last !== beforeLast && text.length > 0) return true;
         }
 
-        // 4. Fallback: Composer is cleared and either send button disabled or generation check
-        if (!norm(DOM.getComposerText()) && (DOM.isGenerating() || (last && last !== beforeLast))) {
+        // 4. Fallback: Composer is cleared after being typed
+        const composerText = norm(DOM.getComposerText());
+        if (!composerText && (DOM.isGenerating() || (last && last !== beforeLast) || (Date.now() > until - timeoutMs + 1000))) {
           return true;
         }
 
-        await sleep(150);
+        await sleep(120);
       }
 
-      // Final post-timeout check: if active generation is now ongoing, treat as sent
+      // Final post-timeout check: if active generation is now ongoing or composer cleared, treat as sent
       if (DOM.isGenerating()) return true;
       const last = HumanSimulator.lastUserNode();
       if (last && probe && norm(last.innerText || last.textContent).includes(probe)) return true;
+      if (!norm(DOM.getComposerText())) return true;
 
       return false;
     }
 
     static async clickSend(prompt) {
       const beforeLast = HumanSimulator.lastUserNode();
+      const input = DOM.getPromptInput();
+
       const isButtonDisabled = (btn) => {
         if (!btn) return true;
-        return btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+        return btn.disabled === true ||
+               btn.getAttribute('disabled') !== null ||
+               btn.getAttribute('aria-disabled') === 'true';
       };
 
+      // 1. Ensure input is focused and change/input event fired so React state settles
+      if (input) {
+        input.focus();
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      // 2. Poll for send button to become available & enabled (up to 2000ms)
       const startTime = Date.now();
       let sendBtn = DOM.getSendButton();
-
-      while (isButtonDisabled(sendBtn) && (Date.now() - startTime < 4000)) {
-        await sleep(100);
+      while (isButtonDisabled(sendBtn) && (Date.now() - startTime < 2000)) {
+        await sleep(80);
         sendBtn = DOM.getSendButton();
       }
 
-      if (isButtonDisabled(sendBtn)) {
-        const input = DOM.getPromptInput();
-        if (input) {
-          input.dispatchEvent(new KeyboardEvent('keydown', {
-            key: 'Enter',
-            code: 'Enter',
-            keyCode: 13,
-            which: 13,
-            bubbles: true
-          }));
-          return await HumanSimulator.confirmSent(prompt, beforeLast);
-        }
-        return false;
+      const triggerFullClick = (el) => {
+        if (!el) return;
+        try {
+          el.focus?.();
+          el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+          el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          el.click();
+        } catch (e) {}
+      };
+
+      // 3. Primary attempt: Click the send button if present
+      if (sendBtn) {
+        // Force-remove disabled attribute if still stuck
+        if (sendBtn.hasAttribute('disabled')) sendBtn.removeAttribute('disabled');
+        if (sendBtn.getAttribute('aria-disabled') === 'true') sendBtn.setAttribute('aria-disabled', 'false');
+
+        triggerFullClick(sendBtn);
+
+        // Also trigger on inner SVG / path if button has them
+        const innerIcon = sendBtn.querySelector('svg, path, polygon, rect');
+        if (innerIcon) triggerFullClick(innerIcon);
+
+        const sentQuick = await HumanSimulator.confirmSent(prompt, beforeLast, 2000);
+        if (sentQuick) return true;
       }
 
-      sendBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      await sleep(50 + Math.random() * 50);
-      sendBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      await sleep(40 + Math.random() * 40);
-      sendBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-      sendBtn.click();
+      // 4. Secondary attempt: Form requestSubmit
+      const form = input?.closest('form') || sendBtn?.closest('form') || document.querySelector('form');
+      if (form) {
+        try {
+          if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit(sendBtn || undefined);
+          } else {
+            form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          }
+        } catch (e) {}
 
-      return await HumanSimulator.confirmSent(prompt, beforeLast);
+        const sentForm = await HumanSimulator.confirmSent(prompt, beforeLast, 2000);
+        if (sentForm) return true;
+      }
+
+      // 5. Tertiary attempt: Keyboard Enter on the input element
+      if (input) {
+        input.focus();
+        try {
+          const sel = window.getSelection();
+          if (sel) {
+            const range = document.createRange();
+            range.selectNodeContents(input);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        } catch (e) {}
+
+        const enterEvent = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        });
+        input.dispatchEvent(enterEvent);
+      }
+
+      // 6. Final confirmation wait
+      return await HumanSimulator.confirmSent(prompt, beforeLast, 4500);
     }
   }
 

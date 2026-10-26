@@ -583,4 +583,65 @@ test('Popup screen is simple, functional, and contains zero emojis', () => {
   assert.ok(popupHtml.includes('id="btn-open-gemini"'), 'Must have Gemini shortcut');
 });
 
+test('ChatGPT modern send buttons (fruitjuice-send-button, composer-submit-button) are detected and clicked reliably', async () => {
+  const dom = new JSDOM(`
+    <!DOCTYPE html>
+    <html>
+      <body>
+        <form id="chat-form">
+          <div id="prompt-textarea" contenteditable="true"><p>テストプロンプト</p></div>
+          <button data-testid="fruitjuice-send-button" aria-label="Send prompt"><svg><polygon></polygon></svg></button>
+        </form>
+      </body>
+    </html>
+  `, { url: 'https://chatgpt.com/' });
+
+  const window = dom.window;
+  const doc = window.document;
+  global.window = window;
+  global.document = doc;
+  global.sessionStorage = window.sessionStorage;
+  global.localStorage = window.localStorage;
+
+  const chromeMock = {
+    runtime: {
+      sendMessage(request, cb) { cb?.({ chromeTabId: 73 }); },
+      onMessage: { addListener() {} }
+    },
+    storage: {
+      local: {
+        get(keys, cb) { if (cb) cb({}); return Promise.resolve({}); },
+        set(items, cb) { if (cb) cb(); return Promise.resolve(); },
+        remove(k, cb) { if (cb) cb(); return Promise.resolve(); }
+      },
+      onChanged: { addListener() {} }
+    }
+  };
+  window.chrome = chromeMock;
+  global.chrome = chromeMock;
+
+  for (const file of ['references.js', 'model-picker.js', 'composer-tools.js']) {
+    window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
+  }
+
+  const contentJs = fs.readFileSync(path.join(root, 'content.js'), 'utf8');
+  const script = contentJs.replace(/const queueManager = new QueueManager\(\);/, 'return;\n  const queueManager = new QueueManager();');
+  window.eval(script);
+
+  const DOM = window.__CGQ_DOM__;
+  const HumanSimulator = window.__CGQ_HumanSimulator__;
+
+  const sendBtn = DOM.getSendButton();
+  assert.ok(sendBtn, 'DOM.getSendButton must find fruitjuice-send-button');
+  assert.equal(sendBtn.getAttribute('data-testid'), 'fruitjuice-send-button');
+
+  // Verify setDOMContent updates input
+  const input = DOM.getPromptInput();
+  HumanSimulator.setDOMContent(input, '新しいプロンプト');
+  assert.ok(input.textContent.includes('新しいプロンプト'), 'setDOMContent must update input text');
+
+  dom.window.close();
+});
+
+
 
