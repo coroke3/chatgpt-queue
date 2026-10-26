@@ -634,19 +634,22 @@ test('Queue Manager top chat bar is transparent without menu open button and bot
   assert.ok(dashInputRow, 'Input row must exist inside card footer');
 });
 
-test('Queue Manager provides simple, delightful micro-animations and feedback states', async t => {
+test('Queue Manager is flat: no shadows, no bounce or hover motion, feedback states kept', async t => {
   const css = fs.readFileSync(path.join(root, 'dashboard.css'), 'utf8');
 
-  // 1. Keyframes for smooth animations
-  assert.ok(css.includes('@keyframes cgq-bubble-in'), 'Must contain @keyframes cgq-bubble-in');
-  assert.ok(css.includes('@keyframes cgq-btn-pop'), 'Must contain @keyframes cgq-btn-pop');
-  assert.ok(css.includes('@keyframes cgq-badge-pop'), 'Must contain @keyframes cgq-badge-pop');
-  assert.ok(css.includes('@keyframes cgq-turn-enter'), 'Must contain @keyframes cgq-turn-enter');
-  assert.ok(css.includes('@keyframes cgq-item-enter'), 'Must contain @keyframes cgq-item-enter');
-  assert.ok(css.includes('@keyframes cgq-toast-in'), 'Must contain @keyframes cgq-toast-in');
+  // 1. Flat: shadow tokens are none and queue panels / composers carry no shadow of their own
+  for (const token of ['--shadow-sm', '--shadow-card', '--shadow-card-hover', '--shadow-float']) {
+    assert.match(css, new RegExp(`${token}: none;`), `${token} must be none`);
+  }
+  const shadows = css.match(/box-shadow:\s*(?!none|var\(|inset)[^;]+;/g) || [];
+  assert.ok(shadows.length <= 1, `only the image lightbox may cast a shadow, found: ${shadows.join(' ')}`);
 
-  // 2. Linear / iOS easing curve usage (cubic-bezier(0.16, 1, 0.3, 1))
-  assert.ok(css.includes('cubic-bezier(0.16, 1, 0.3, 1)'), 'Must use smooth cubic-bezier curve');
+  // 2. No bounce / pop keyframes and no movement on hover or press
+  for (const name of ['cgq-btn-pop', 'cgq-badge-pop', 'cgq-bubble-in', 'cgq-turn-enter', 'cgq-item-enter']) {
+    assert.ok(!css.includes(`@keyframes ${name}`), `${name} must be gone`);
+  }
+  const interactive = css.match(/[^{}]*:(?:hover|active)[^{}]*\{[^}]*\}/g) || [];
+  assert.ok(interactive.every(rule => !/\btransform:/.test(rule)), 'hover/active rules must not move elements');
 
   // 3. Accessibility reduced motion support
   assert.ok(css.includes('prefers-reduced-motion: reduce'), 'Must respect prefers-reduced-motion');
@@ -678,7 +681,7 @@ test('Queue Manager provides simple, delightful micro-animations and feedback st
   assert.ok(copyBtn, 'Copy turn button must exist');
   copyBtn.click();
   await tick();
-  assert.ok(copyBtn.classList.contains('copied'), 'Copy button must receive .copied animation class on click');
+  assert.ok(copyBtn.classList.contains('copied'), 'Copy button must receive the .copied feedback class on click');
 
   // Test send button click animation feedback
   const sendBtn = f.doc.getElementById('single-btn-send');
@@ -686,5 +689,5 @@ test('Queue Manager provides simple, delightful micro-animations and feedback st
   input.value = 'アニメーションテスト入力';
   sendBtn.click();
   await tick();
-  assert.ok(sendBtn.classList.contains('sent'), 'Send button must receive .sent animation class on submit');
+  assert.ok(sendBtn.classList.contains('sent'), 'Send button must receive the .sent feedback class on submit');
 });

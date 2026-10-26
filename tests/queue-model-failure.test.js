@@ -88,3 +88,52 @@ test('Gemini queue reads model metadata and proceeds through typing and send wit
   assert.equal(info.supportsEffort, false);
   dom.window.close();
 });
+
+test('a prompt typed and then abandoned (paused mid-typing) is cleared and sent after resuming, not left as a draft forever', async t => {
+  const dom = new JSDOM('<!doctype html><body><textarea></textarea></body>', {
+    url: 'https://chatgpt.com/c/test', runScripts: 'outside-only', pretendToBeVisual: true
+  });
+  const { window } = dom;
+  t.after(() => dom.window.close());
+  const root = path.join(__dirname, '..');
+  window.eval(fs.readFileSync(path.join(root, 'references.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'model-picker.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
+  const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
+    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+      'const sleep = async () => { if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
+    .replace('  const queueManager = new QueueManager();',
+      '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();');
+  window.eval(source);
+  const { QueueManager, DOM, HumanSimulator } = window.__queueTest;
+  const queue = new QueueManager();
+  queue.items = [{ id: 'item-1', text: 'Leftover prompt', model: 'auto', effort: 'auto' }];
+  Object.assign(queue.settings, { minReadDelay: 0, maxReadDelay: 0, soundNotification: false, autoScroll: false });
+  queue.notify = () => {};
+  queue.saveQueue = async () => {};
+  window.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } } };
+  const textarea = window.document.querySelector('textarea');
+  DOM.isGenerating = () => false;
+  DOM.getPromptInput = () => textarea;
+  DOM.getLastResponseLength = () => 0;
+  DOM.getConversationLimitWarning = () => null;
+  let typed = 0;
+  let sentText = null;
+  let iterations = 0;
+  HumanSimulator.typeText = async (el, text) => {
+    typed++;
+    el.value = text;
+    if (typed === 1) queue.isPaused = true; // the user pauses while the prompt is being typed
+    return true;
+  };
+  HumanSimulator.clickSend = async () => { sentText = textarea.value; textarea.value = ''; return true; };
+  window.__stopLoop = () => {
+    iterations++;
+    if (queue.isPaused && iterations > 5) queue.isPaused = false; // ...and resumes later
+    return sentText !== null || iterations > 300;
+  };
+  await assert.rejects(queue.startLoop(), /TEST_STOP/);
+  assert.equal(sentText, 'Leftover prompt', queue.currentAction);
+  assert.equal(typed, 2);
+  assert.equal(queue.items.length, 0);
+});

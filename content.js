@@ -86,6 +86,7 @@
   const STORAGE_KEY_REGISTRY = 'cgq_tabs_registry';
   const STORAGE_KEY_SETTINGS = 'cgq_user_settings';
   const STORAGE_KEY_UI_STATE = 'cgq_ui_state';
+  const SESSION_KEY_CHAT_ROLLOVER = 'cgq_chat_rollover';
 
   const DEFAULT_SETTINGS = {
     enterToQueue: true,         // Press Enter to add to queue, Shift+Enter for newline
@@ -161,6 +162,7 @@
   // Helper Utilities
   // ==========================================================================
 
+  const normalizeDraft = value => String(value || '').replace(/\s+/g, ' ').trim();
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   function generateId() {
@@ -367,6 +369,42 @@
       }
 
       return false;
+    },
+
+    getConversationLimitWarning() {
+      if (!IS_CHATGPT) return null;
+      // Cheap pre-check: skip the element scan unless the wording is on the page at all.
+      if (!/長さの上限|maximum length|length limit|reached the limit/i.test(document.body?.textContent || '')) return null;
+      const excluded = 'pre, code, .markdown, [data-message-author-role], [data-user-message-bubble], ' +
+        '[id^="cgq-"], [class^="cgq-"], [hidden], [inert], [aria-hidden="true"]';
+      // Include notices outside <main> (for example, a portal-rendered alert).
+      const candidates = document.querySelectorAll('[role="alert"], [role="status"], [data-testid*="error"], ' +
+        '[class*="SurfaceError"], [class*="SurfaceWarning"], main div, main p, main span');
+      for (const el of candidates) {
+        if (el.closest(excluded)) continue;
+        // Never match a container whose text includes quoted conversation content.
+        if (el.querySelector(excluded)) continue;
+        if (el.children.length > 2 && !el.matches('[role="alert"], [role="status"]')) continue;
+        const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!(/この会話は長さの上限に(?:到達|達)しています/.test(text) ||
+          /(?:you(?:'|’)ve reached the maximum length for this conversation|this conversation (?:has reached|is at) (?:the|its) (?:maximum )?(?:length )?limit)/i.test(text))) continue;
+        let visible = true;
+        for (let parent = el; parent; parent = parent.parentElement) {
+          const style = getComputedStyle(parent);
+          if (style.display === 'none' || style.visibility === 'hidden') { visible = false; break; }
+        }
+        if (visible) return el;
+      }
+      return null;
+    },
+
+    getNewChatUrl() {
+      const url = new URL(window.location.href);
+      // Keep the current project or custom GPT when starting its next chat.
+      const gpt = url.pathname.match(/^\/g\/[^/]+/);
+      url.pathname = gpt ? gpt[0] : '/';
+      url.hash = '';
+      return url.href;
     },
 
     checkConnectionLost() {
@@ -1933,10 +1971,6 @@
 
         triggerFullClick(sendBtn);
 
-        // Also trigger on inner SVG / path if button has them
-        const innerIcon = sendBtn.querySelector('svg, path, polygon, rect');
-        if (innerIcon) triggerFullClick(innerIcon);
-
         const sentQuick = await HumanSimulator.confirmSent(prompt, beforeLast, 2000);
         if (sentQuick) return true;
       }
@@ -2019,6 +2053,8 @@
       this.sessionStartTime = Date.now();
       this.lastProcessedTime = Date.now();
       this.connectionLostSince = null;
+      this.switchingChatSince = null;
+      this.chatRolloverFailed = false;
       this.isStuckToBottom = true;
 
       this.listeners = [];
@@ -2045,6 +2081,7 @@
       } catch (e) {}
 
       await this.loadFromStorage();
+      await this.restoreConversationRollover();
       this.setupStorageListener();
       this.setupRegistryHeartbeat();
       this.setupUrlWatcher();
@@ -2229,10 +2266,77 @@
       }
     }
 
+    navigateToNewChat(url) {
+      window.location.assign(url);
+    }
+
+    async checkConversationLimitAndStartNewChat() {
+      if (this.switchingChatSince) {
+        if (Date.now() - this.switchingChatSince < 15000) return true;
+        this.switchingChatSince = null;
+        this.chatRolloverFailed = true;
+        sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, '新しいチャットを開けませんでした。キューを保持して停止しました。');
+      }
+      if (this.chatRolloverFailed || !DOM.getConversationLimitWarning()) return false;
+
+      this.switchingChatSince = Date.now();
+      this.setState(QueueState.WAITING_GENERATION, '会話の長さ上限に達したため、新しいチャットを開始中...');
+      try {
+        // Store before navigating: a full page load must not lose the pending queue.
+        await chrome.storage.local.set({ [this.storageKeyQueue]: this.items });
+        sessionStorage.setItem(SESSION_KEY_CHAT_ROLLOVER, JSON.stringify({
+          sourceTabId: this.tabId,
+          sourceUrl: this.currentUrl,
+          targetUrl: DOM.getNewChatUrl(),
+          isPaused: this.isPaused
+        }));
+        this.navigateToNewChat(DOM.getNewChatUrl());
+      } catch (error) {
+        this.switchingChatSince = null;
+        this.chatRolloverFailed = true;
+        sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, '新しいチャットを開けませんでした。キューを保持して停止しました。');
+      }
+      return true;
+    }
+
+    async restoreConversationRollover() {
+      const saved = sessionStorage.getItem(SESSION_KEY_CHAT_ROLLOVER);
+      if (!saved) return false;
+      try {
+        const pending = JSON.parse(saved);
+        const target = new URL(pending.targetUrl);
+        const current = new URL(this.currentUrl);
+        if (current.origin !== target.origin || current.pathname !== target.pathname ||
+          this.currentUrl === pending.sourceUrl) return false;
+        const sourceKey = `cgq_queue_${pending.sourceTabId}`;
+        const result = await chrome.storage.local.get([sourceKey]);
+        const items = Array.isArray(result[sourceKey]) ? result[sourceKey] : [];
+        await chrome.storage.local.set({ [sourceKey]: [], [this.storageKeyQueue]: items });
+        this.items = items;
+        this.previousTabId = pending.sourceTabId;
+        this.isPaused = pending.isPaused === true;
+        this.switchingChatSince = null;
+        this.chatRolloverFailed = false;
+        sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
+        this.setState(this.isPaused ? QueueState.PAUSED : QueueState.IDLE,
+          '新しいチャットに切り替えました');
+        return true;
+      } catch (error) {
+        // Leave the marker and source queue intact so a reload can retry recovery.
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, 'キューの引き継ぎに失敗しました。ページを再読み込みしてください。');
+        return false;
+      }
+    }
+
     checkUrlChange() {
       const href = window.location.href;
       if (href !== this.currentUrl) {
-        this.handleUrlChange(href);
+        return this.handleUrlChange(href);
       }
     }
 
@@ -2704,6 +2808,7 @@
 
     togglePause() {
       this.isPaused = !this.isPaused;
+      if (!this.isPaused) this.chatRolloverFailed = false;
       this.setState(this.isPaused ? QueueState.PAUSED : QueueState.IDLE);
       showToast(this.isPaused ? 'キューを一時停止しました' : 'キューを再開しました');
     }
@@ -2725,7 +2830,9 @@
         const isIdle = this.items.length === 0 && !DOM.isGenerating();
         const loopInterval = document.hidden ? (isIdle ? 2500 : 1000) : (isIdle ? 1000 : 400);
         await sleep(loopInterval);
-        this.checkUrlChange();
+        await this.checkUrlChange();
+
+        if (await this.checkConversationLimitAndStartNewChat()) continue;
 
         if (this.checkConnectionAndAutoReload()) {
           await sleep(1000);
@@ -2773,7 +2880,7 @@
 
         for (let check = 0; check < checkCount; check++) {
           await sleep(checkDelay);
-          if (DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
+          if (DOM.getConversationLimitWarning() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
             stable = false;
             break;
           }
@@ -2851,7 +2958,7 @@
             aborted = true;
             break;
           }
-          if (DOM.isGenerating()) {
+          if (DOM.getConversationLimitWarning() || DOM.isGenerating()) {
             aborted = true;
             break;
           }
@@ -2866,6 +2973,7 @@
         }
 
         if (aborted || modelPicker.pending || composerTools.pending) continue;
+        if (await this.checkConversationLimitAndStartNewChat()) continue;
 
         // 5.5 Verify the requested model before typing or sending anything.
         try {
@@ -2891,7 +2999,16 @@
         }
         if (this.isPaused || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
 
-        if (DOM.getComposerText()) {
+        const draft = DOM.getComposerText();
+        if (draft) {
+          // Text this loop typed earlier and then abandoned (pause, reorder, limit check):
+          // clear it instead of waiting forever for the "user's draft" to disappear.
+          if (this.leftoverDraft && normalizeDraft(draft) === normalizeDraft(this.leftoverDraft)) {
+            DOM.clearComposer();
+            this.leftoverDraft = null;
+            await sleep(300);
+            continue;
+          }
           this.setState(QueueState.WAITING_GENERATION, '入力欄の下書きが空になるまで待機中...');
           continue;
         }
@@ -2935,10 +3052,12 @@
           },
           promptTokens
         );
+        this.leftoverDraft = nextItem.text;
 
         if (!typedSuccessfully || this.isPaused || this.items.length === 0 || this.items[0].id !== nextItem.id) {
           continue;
         }
+        if (await this.checkConversationLimitAndStartNewChat()) continue;
 
         const selectedTools = composerTools.capture().tools;
         if ((nextItem.tools || []).some(tool => !selectedTools.some(actual => actual.type === tool.type &&
@@ -2961,6 +3080,10 @@
           this.sendingNow = false;
         }
 
+        // A rejected submission can still add a user bubble. Check the limit
+        // before treating that bubble as confirmation and removing the item.
+        if (await this.checkConversationLimitAndStartNewChat()) continue;
+
         // Failsafe confirmation: 送信ボタン押下後に回答生成が開始されたか、または最新ターンに対象プロンプトが存在すれば送信成功として扱う
         if (!sent) {
           if (DOM.isGenerating()) {
@@ -2978,6 +3101,7 @@
         }
 
         if (sent) {
+          this.leftoverDraft = null;
           this.sendFailures = 0;
           this.lastSentTimestamp = Date.now();
           this.lastSentPrompt = nextItem.text;
@@ -3026,6 +3150,7 @@
             continue;
           }
           DOM.clearComposer();
+          this.leftoverDraft = null;
           await sleep(2000);
         }
       }

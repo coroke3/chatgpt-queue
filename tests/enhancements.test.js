@@ -7,24 +7,22 @@ const { JSDOM } = require('jsdom');
 const root = path.join(__dirname, '..');
 const refs = require('../references.js');
 
-test('Gen Interface JP all 8 weights (100-800) are loaded in dashboard.html, dashboard.css, styles.css, and popup.html', () => {
+test('Gen Interface JP loads only weights 300-600 on extension pages, and nothing on ChatGPT / Gemini', () => {
   const html = fs.readFileSync(path.join(root, 'dashboard.html'), 'utf8');
   const dashCss = fs.readFileSync(path.join(root, 'dashboard.css'), 'utf8');
   const stylesCss = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
   const popupHtml = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
 
-  const expectedWeights = [100, 200, 300, 400, 500, 600, 700, 800];
-
-  for (const w of expectedWeights) {
-    const linkNeedle = `cdn/${w}.css`;
-    assert.ok(html.includes(linkNeedle), `dashboard.html must link weight ${w}`);
-    assert.ok(dashCss.includes(linkNeedle), `dashboard.css must import weight ${w}`);
-    assert.ok(stylesCss.includes(linkNeedle), `styles.css must import weight ${w}`);
-    assert.ok(popupHtml.includes(linkNeedle), `popup.html must link weight ${w}`);
+  for (const page of [html, popupHtml]) {
+    for (const w of [300, 400, 500, 600]) assert.ok(page.includes(`cdn/${w}.css`), `weight ${w} must be linked`);
+    for (const w of [100, 200, 700, 800]) assert.ok(!page.includes(`cdn/${w}.css`), `unused weight ${w} must not be linked`);
+    assert.ok(!page.includes('fonts.googleapis.com'), 'Google Fonts is blocked by the extension CSP and must not be requested');
   }
-
+  // Fonts are linked once, from the HTML: no duplicate @import in the stylesheets
+  assert.ok(!/@import/.test(dashCss), 'dashboard.css must not @import fonts');
+  assert.ok(!/@import/.test(stylesCss), 'styles.css (injected into ChatGPT / Gemini) must not download fonts');
   assert.match(dashCss, /--font:\s*["']Gen Interface JP["']/, 'dashboard.css must prioritize Gen Interface JP');
-  assert.match(stylesCss, /--cgq-font:\s*["']Gen Interface JP["']/, 'styles.css must prioritize Gen Interface JP');
+  assert.match(stylesCss, /--cgq-font:\s*inherit/, 'styles.css must use the host page font');
 });
 
 test('Tab titles on Queue Manager strip " - Google Gemini" and " - Gemini" cleanly', () => {
@@ -228,7 +226,7 @@ test('Tab reload and reconnect controls are available across Single Chat and Gri
 
   // Connection lost indicator & pill styles
   assert.ok(dashJs.includes("dotClass = 'connection-lost'"), 'dashboard.js must set connection-lost dotClass');
-  assert.match(dashCss, /\.cgq-tab-status-pill\.connection-lost/, 'dashboard.css must style .cgq-tab-status-pill.connection-lost');
+  assert.match(dashCss, /\.connection-lost > \.cgq-stat-dot/, 'dashboard.css must colour the dot inside a .connection-lost status pill');
   assert.match(dashCss, /\.cgq-stat-dot\.connection-lost/, 'dashboard.css must style .cgq-stat-dot.connection-lost');
 });
 

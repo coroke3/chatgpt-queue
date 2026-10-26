@@ -368,64 +368,54 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // mermaid (3.2MB) is loaded only when an answer actually contains a diagram.
+  let mermaidLoading = null;
+  function loadMermaid() {
+    if (window.mermaid) return Promise.resolve(true);
+    return mermaidLoading ||= new Promise(resolve => {
+      const script = document.createElement('script');
+      script.src = 'libs/mermaid.min.js';
+      script.onload = () => { initMermaid(document.body.classList.contains('dark')); resolve(true); };
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  }
+
   function initMermaid(isDark) {
     if (!window.mermaid) return;
     try {
-      window.mermaid.initialize({
-        startOnLoad: false,
-        theme: isDark ? 'dark' : 'default',
-        securityLevel: 'loose',
-        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-      });
+      window.mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default', securityLevel: 'loose', fontFamily: 'inherit' });
     } catch (e) {
       console.warn('[Dashboard] Mermaid init error:', e);
     }
   }
 
   async function renderMermaidDiagrams(container) {
-    if (!window.mermaid || !container) return;
-    const wrappers = container.querySelectorAll('.cgq-mermaid-wrapper');
+    if (!container) return;
+    const wrappers = [...container.querySelectorAll('.cgq-mermaid-wrapper')]
+      .filter(w => w.querySelector('.cgq-mermaid-svg-container')?.dataset.rendered !== 'true');
+    if (!wrappers.length || !(await loadMermaid())) return;
     for (const wrapper of wrappers) {
       const svgContainer = wrapper.querySelector('.cgq-mermaid-svg-container');
-      const rawElem = wrapper.querySelector('.cgq-mermaid-raw code');
-      if (!svgContainer || !rawElem) continue;
-      if (svgContainer.dataset.rendered === 'true') continue;
-
-      const rawCode = rawElem.textContent.trim();
-      if (!rawCode) continue;
-
+      const rawCode = wrapper.querySelector('.cgq-mermaid-raw code')?.textContent.trim();
+      if (!svgContainer || !rawCode) continue;
       const uniqueId = 'mermaidSvg' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
       try {
         const res = await window.mermaid.render(uniqueId, rawCode);
-        const svg = (typeof res === 'object' && res !== null) ? res.svg : res;
+        const svg = typeof res === 'object' && res ? res.svg : res;
         if (svg) {
           svgContainer.innerHTML = svg;
           svgContainer.dataset.rendered = 'true';
         }
-      } catch (err) {
-        const tempErr = document.getElementById('d' + uniqueId);
-        if (tempErr) tempErr.remove();
-
-        svgContainer.innerHTML = `
-          <div style="font-size: 11.5px; color: var(--text-muted); padding: 8px 12px; background: var(--bg-subtle); border-radius: 6px; width: 100%;">
-            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; color: #f59e0b; font-weight: 500;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-              </svg>
-              <span>図形の読み込み中 / 構文確認</span>
-            </div>
-            <pre style="margin: 0; font-family: var(--font-mono); font-size: 11px; overflow-x: auto; color: var(--text);">${escapeHtml(rawCode)}</pre>
-          </div>
-        `;
+      } catch {
+        document.getElementById('d' + uniqueId)?.remove();
+        svgContainer.innerHTML = `<div class="cgq-mermaid-error"><span>図形を描画できませんでした</span><pre>${escapeHtml(rawCode)}</pre></div>`;
       }
     }
   }
 
   // Setup marked renderer & mermaid immediately at startup
   setupMarkedRenderer();
-  initMermaid(document.body.classList.contains('dark'));
 
   // --------------------------------------------------------------------------
   // Theme Handling
@@ -2188,7 +2178,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="cgq-tab-info">
           <span class="cgq-tab-title" title="${escapeHtml(cleanTabTitle(t.title, t.platform))}">${escapeHtml(cleanTabTitle(t.title, t.platform))}</span>
           <div class="cgq-tab-status-pill ${dotClass}">
-            <span class="cgq-stat-dot" style="background: currentColor;"></span>
+            <span class="cgq-stat-dot"></span>
             <span>${statusLabel}</span>
           </div>
           <div class="cgq-tab-model-pill sm ${(!isGemini && t.model && t.model.startsWith('o')) || (isGemini && /thinking|思考/i.test(t.model || '')) ? 'reasoning' : ''}" title="現在のモデル">
@@ -2196,7 +2186,7 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         </div>
         <div class="cgq-tab-card-actions">
-          <button class="cgq-btn secondary sm btn-open-single" data-tab-id="${t.tabId}" title="個別チャット表示に切り替え" aria-label="個別チャット表示に切り替え">
+          <button class="cgq-icon-btn sm btn-open-single" data-tab-id="${t.tabId}" title="個別チャット表示に切り替え" aria-label="個別チャット表示に切り替え">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
@@ -2392,7 +2382,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const pillEl = card.querySelector('.cgq-tab-status-pill');
     if (pillEl) {
       pillEl.className = `cgq-tab-status-pill ${dotClass}`;
-      pillEl.innerHTML = `<span class="cgq-stat-dot" style="background: currentColor;"></span><span>${statusLabel}</span>`;
+      pillEl.innerHTML = `<span class="cgq-stat-dot"></span><span>${statusLabel}</span>`;
     }
 
     // Model Pill
@@ -2568,14 +2558,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function buildActivityHtml(t) {
     if (t.isPaused || !t.currentState || t.currentState === 'idle') return '';
     return `
-      <div style="padding: 6px 14px; background: var(--bg-subtle); display: flex; flex-direction: column; gap: 4px;">
-        <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary);">
+      <div class="cgq-chat-activity-bar">
+        <div class="cgq-activity-row">
           <span>${escapeHtml(t.currentAction || '処理中...')}</span>
           <span>${escapeHtml(t.progressText || '')}</span>
         </div>
-        <div style="width: 100%; height: 2px; background: var(--border); border-radius: 2px; overflow: hidden;">
-          <div style="height: 100%; background: #10b981; width: ${t.progressPercent || 0}%;"></div>
-        </div>
+        <div class="cgq-progress-track"><div class="cgq-progress-fill" style="width: ${t.progressPercent || 0}%;"></div></div>
       </div>
     `;
   }
@@ -3023,10 +3011,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       };
     }
-  }
-
-  function bindCopyEvent(card, tabId) {
-    bindCodeBlockCopy(card);
   }
 
   // Returns false when the command was not sent, so the caller keeps the user's input.

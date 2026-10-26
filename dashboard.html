@@ -7,19 +7,12 @@
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="icon" type="image/png" sizes="48x48" href="icons/icon48.png">
   <link rel="icon" type="image/png" sizes="16x16" href="icons/icon16.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@100;200;300;400;500;600;700;800;900&display=swap">
-  <!-- Gen Interface JP (https://gen.typesetting.jp/) - All Weights -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/100.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/200.css">
+  <!-- Gen Interface JP (https://gen.typesetting.jp/), weights 300-600 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/300.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/400.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/500.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/600.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/700.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/800.css">
   <link rel="stylesheet" href="dashboard.css">
   <link rel="stylesheet" href="composer-tools.css">
 </head>
@@ -163,7 +156,7 @@
           <div class="cgq-chat-header-info">
             <h1 class="cgq-chat-title" id="single-chat-title">チャットを選択してください</h1>
             <div class="cgq-chat-status-pill idle" id="single-chat-status">
-              <span class="cgq-stat-dot" style="background: currentColor;"></span>
+              <span class="cgq-stat-dot"></span>
               <span id="single-chat-status-text">待機中</span>
             </div>
             <!-- Active Model & Effort Badge -->
@@ -174,14 +167,14 @@
             </div>
           </div>
           <div class="cgq-chat-header-actions">
-            <button class="cgq-btn secondary sm" id="single-btn-focus-tab" title="このチャットのブラウザタブを開く">
+            <button class="cgq-icon-btn" id="single-btn-focus-tab" title="このチャットのブラウザタブを開く">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
                 <polyline points="15 3 21 3 21 9"></polyline>
                 <line x1="10" y1="14" x2="21" y2="3"></line>
               </svg>
             </button>
-            <button class="cgq-btn secondary sm" id="single-btn-reload-tab" title="このチャットタブを再読み込み">
+            <button class="cgq-icon-btn" id="single-btn-reload-tab" title="このチャットタブを再読み込み">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
               </svg>
@@ -736,10 +729,7 @@
   <!-- Global Toast Feedback -->
   <div id="cgq-dash-toast" class="cgq-dash-toast" style="display: none;"></div>
 
-  <!-- External Libraries: Local marked.js & mermaid.js for Markdown & Diagram rendering -->
   <script src="libs/marked.min.js"></script>
-  <script src="libs/mermaid.min.js"></script>
-  <script src="typography.js"></script>
   <script src="references.js"></script>
   <script src="composer-tools.js"></script>
   <script src="dashboard.js"></script>

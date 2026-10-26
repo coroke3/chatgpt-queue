@@ -39,7 +39,6 @@
   border: 1px solid var(--border, var(--cgq-border, #ddd));
   background: var(--bg-card, var(--cgq-bg, #fff));
   color: var(--text, var(--cgq-text-main, #222));
-  box-shadow: 0 6px 20px #0002;
   font-family: var(--font, var(--cgq-font, sans-serif));
   font-weight: var(--cgq-font-weight, 400);
 }

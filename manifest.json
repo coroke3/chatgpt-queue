@@ -36,7 +36,6 @@
         "https://gemini.google.com/*"
       ],
       "js": [
-        "typography.js",
         "references.js",
         "model-picker.js",
         "composer-tools.js",
