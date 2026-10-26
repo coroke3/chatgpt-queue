@@ -56,6 +56,14 @@
     return requests.length && body ? { text: body, requests } : { text: String(value || '').trim(), requests: [] };
   }
 
+  function splitPrompts(value, mode = 'single') {
+    const body = String(value || '').replace(/\r\n?/g, '\n');
+    const parts = mode === 'line' ? body.split('\n')
+      : mode === 'empty_line' ? body.split(/\n[\t ]*\n+/)
+      : mode === 'hyphens' ? body.split(/^[\t ]*---[\t ]*$/m) : [body];
+    return parts.map(part => part.trim()).filter(Boolean);
+  }
+
   class NativeTools {
     constructor(platform, { doc = document, getInput, setText, wait = ms => new Promise(r => setTimeout(r, ms)), isVisible } = {}) {
       this.platform = platform;
@@ -123,7 +131,8 @@
           if (node.nodeType !== 1 || node.matches('script,style,[aria-hidden="true"]')) return '';
           if (node.tagName === 'BR') return '\n';
           const content = Array.from(node.childNodes).map(walk).join('');
-          return /^(P|DIV|LI)$/.test(node.tagName) && node !== input ? content + '\n' : content;
+          // An empty editor paragraph uses <br> as its placeholder; it is one blank line.
+          return /^(P|DIV|LI)$/.test(node.tagName) && node !== input ? (content === '\n' ? '' : content) + '\n' : content;
         };
         body = walk(input);
       }
@@ -509,7 +518,7 @@
     return [...current, ...extra];
   }
 
-  const api = { NativeTools, normalize, parsePrompt, attach, remember, recall, mergeOptions, toolKind, matchesQuery };
+  const api = { NativeTools, normalize, parsePrompt, splitPrompts, attach, remember, recall, mergeOptions, toolKind, matchesQuery };
   globalThis.CGQComposerTools = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

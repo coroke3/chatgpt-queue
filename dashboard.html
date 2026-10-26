@@ -275,7 +275,7 @@
 
                 <!-- Bulk Add Button (1 prompt per line) -->
                 <button type="button" class="cgq-chatgpt-pill-btn" id="single-btn-newchat" title="キューの末尾に新しいチャットの開始を追加">/newchat</button>
-                <button type="button" class="cgq-chatgpt-pill-btn cgq-icon-only" id="single-btn-bulk-add" title="プロンプトを一括追加 (1行1プロンプト)" aria-label="プロンプトを一括追加">
+                <button type="button" class="cgq-chatgpt-pill-btn cgq-icon-only" id="single-btn-bulk-add" title="プロンプトを追加（複数行・一括入力）" aria-label="プロンプトを一括追加">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <line x1="8" y1="6" x2="21" y2="6"></line>
                     <line x1="8" y1="12" x2="21" y2="12"></line>
@@ -692,7 +692,7 @@
   <div class="cgq-modal-overlay" id="dashboard-bulk-modal" style="display: none;">
     <div class="cgq-modal-container" role="dialog" aria-modal="true" aria-label="プロンプトの一括追加">
       <div class="cgq-modal-header">
-        <span>プロンプトの一括追加（1行1プロンプト）</span>
+        <span>プロンプトの追加（複数行・一括入力）</span>
         <button type="button" class="cgq-icon-btn" id="bulk-modal-close" title="閉じる">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -711,9 +711,10 @@
         <div style="display: flex; flex-direction: column; gap: 6px;">
           <label style="font-size: 12px; font-weight: 600; color: var(--text);">区切り方式</label>
           <select id="bulk-modal-delimiter" style="padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-size: 12.5px;">
-            <option value="line" selected>1行ごとに1プロンプト (推奨)</option>
+            <option value="single" selected>全体を1プロンプト（改行を保持）</option>
+            <option value="line">1行ごとに1プロンプト</option>
             <option value="empty_line">空行（2連続改行）で区切る</option>
-            <option value="hyphens">--- (ハイフン3つ) で区切る</option>
+            <option value="hyphens">--- の行で区切る（複数行のプロンプトを一括追加）</option>
           </select>
         </div>
         <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -721,7 +722,7 @@
             <label style="font-size: 12px; font-weight: 600; color: var(--text);">プロンプト一覧</label>
             <span id="bulk-modal-counter" style="font-size: 11.5px; color: var(--text-muted); font-weight: 500;">0件検出</span>
           </div>
-          <textarea id="bulk-modal-textarea" rows="8" placeholder="ここに1行ずつプロンプトを入力または貼り付けしてください...&#10;例:&#10;第1章の要約を作成して&#10;第2章の登場人物を箇条書きにして&#10;全体のアクションプランを提案して" style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-family: inherit; font-size: 12.5px; line-height: 1.5; resize: vertical;"></textarea>
+          <textarea id="bulk-modal-textarea" rows="8" placeholder="複数行のプロンプトをそのまま入力できます。&#10;例: 次の条件で調査してください。&#10;・公式資料を使う&#10;・結論と根拠をまとめる&#10;&#10;複数件を追加する場合は、区切り方式を選択してください。" style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-family: inherit; font-size: 12.5px; line-height: 1.5; resize: vertical;"></textarea>
         </div>
       </div>
       <div class="cgq-modal-footer">

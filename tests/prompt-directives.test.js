@@ -85,6 +85,14 @@ test('dashboard bulk input forwards directives verbatim and ignores IME confirma
   await new Promise(resolve => setImmediate(resolve));
   window.document.getElementById('nav-bulk-add').click();
   const input = window.document.getElementById('bulk-modal-textarea');
+  assert.equal(window.document.getElementById('bulk-modal-delimiter').value, 'single');
+  const multiline = '/deepresearch\n公式資料を使ってください。\n\n出典を記載してください。';
+  input.value = multiline;
+  window.document.getElementById('bulk-modal-submit').click();
+  assert.deepEqual(Array.from(commands.find(cmd => cmd.action === 'ENQUEUE_MANY').texts), [multiline]);
+  commands.length = 0;
+  window.document.getElementById('nav-bulk-add').click();
+  window.document.getElementById('bulk-modal-delimiter').value = 'line';
   input.value = 'Question\n/newchat\n@GitHub Review';
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true, bubbles: true }));
   assert.equal(commands.some(cmd => cmd.action === 'ENQUEUE_MANY'), false);

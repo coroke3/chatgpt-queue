@@ -2270,7 +2270,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
 
               <!-- Card Bulk Add Button (1 prompt per line) -->
-              <button type="button" class="cgq-chatgpt-pill-btn sm cgq-icon-only card-bulk-add-btn" data-tab-id="${t.tabId}" title="プロンプトを一括追加 (1行1プロンプト)" aria-label="プロンプトを一括追加">
+              <button type="button" class="cgq-chatgpt-pill-btn sm cgq-icon-only card-bulk-add-btn" data-tab-id="${t.tabId}" title="プロンプトを追加（複数行・一括入力）" aria-label="プロンプトを一括追加">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <line x1="8" y1="6" x2="21" y2="6"></line>
                     <line x1="8" y1="12" x2="21" y2="12"></line>
@@ -3239,17 +3239,7 @@ a{color:inherit}
 
   function getBulkPrompts() {
     if (!bulkTextarea || !bulkDelimSelect) return [];
-    const text = bulkTextarea.value || '';
-    const delim = bulkDelimSelect.value;
-    let items = [];
-    if (delim === 'line') {
-      items = text.split('\n');
-    } else if (delim === 'empty_line') {
-      items = text.split(/\n\s*\n/);
-    } else if (delim === 'hyphens') {
-      items = text.split(/^---$/m);
-    }
-    return items.map(s => s.trim()).filter(Boolean);
+    return CGQComposerTools.splitPrompts(bulkTextarea.value, bulkDelimSelect.value);
   }
 
   function updateBulkCounter() {

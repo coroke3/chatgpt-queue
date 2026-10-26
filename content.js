@@ -3944,7 +3944,7 @@
                 <rect x="3" y="14" width="7" height="7"></rect>
               </svg>
             </button>
-            <button class="cgq-panel-btn" id="cgq-btn-bulk" title="プロンプトを一括追加 (1行1プロンプト)" style="display: none;">
+            <button class="cgq-panel-btn" id="cgq-btn-bulk" title="プロンプトを追加（複数行・一括入力）" style="display: none;">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="8" y1="6" x2="21" y2="6"></line>
                 <line x1="8" y1="12" x2="21" y2="12"></line>
@@ -4348,7 +4348,7 @@
           bulk.id = 'cgq-injected-bulk-btn';
           bulk.className = 'cgq-injected-btn';
           bulk.type = 'button';
-          bulk.title = 'プロンプトを一括追加 (1行1プロンプト)';
+          bulk.title = 'プロンプトを追加（複数行・一括入力）';
           bulk.setAttribute('aria-label', 'プロンプトを一括追加');
           bulk.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>';
           bulk.onclick = (e) => {
@@ -4593,9 +4593,10 @@
             <div class="cgq-form-group">
               <label class="cgq-form-label">区切り方式</label>
               <select id="cgq-bulk-delimiter" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--cgq-border); background: var(--cgq-bg); color: var(--cgq-text-main);">
+                <option value="single" selected>全体を1プロンプト（改行を保持）</option>
                 <option value="line">1行ごとに1プロンプト</option>
                 <option value="empty_line">空行（2連続改行）で区切る</option>
-                <option value="hyphens">--- (ハイフン3つ) で区切る</option>
+                <option value="hyphens">--- の行で区切る（複数行のプロンプトを一括追加）</option>
               </select>
             </div>
             <div class="cgq-form-group">
@@ -4634,17 +4635,7 @@
       const submitBtn = modal.querySelector('#cgq-bulk-submit');
 
       const getParsedPrompts = () => {
-        const text = textarea.value;
-        const delim = delimSelect.value;
-        let items = [];
-        if (delim === 'line') {
-          items = text.split('\n');
-        } else if (delim === 'empty_line') {
-          items = text.split(/\n\s*\n/);
-        } else if (delim === 'hyphens') {
-          items = text.split(/^---$/m);
-        }
-        return items.map(s => s.trim()).filter(Boolean);
+        return CGQComposerTools.splitPrompts(textarea.value, delimSelect.value);
       };
 
       const updateCount = () => {

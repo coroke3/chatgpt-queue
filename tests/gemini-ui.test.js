@@ -85,6 +85,27 @@ test('Gemini initializes with a visible empty panel and Queue button before a na
   f.dom.window.close();
 });
 
+test('in-page bulk editor retains multiline prompts by default and batches multiline blocks', async t => {
+  const f = await boot();
+  t.after(() => f.dom.window.close());
+  f.doc.getElementById('cgq-btn-pause').click();
+  const first = '/deepresearch\n公式資料を使ってください。\n\n条件:\n・出典を記載';
+  f.doc.getElementById('cgq-injected-bulk-btn').click();
+  assert.equal(f.doc.getElementById('cgq-bulk-delimiter').value, 'single');
+  f.doc.getElementById('cgq-bulk-textarea').value = first;
+  f.doc.getElementById('cgq-bulk-submit').click();
+  await tick(); await tick();
+  let items = Object.entries(f.store).find(([key]) => key.startsWith('cgq_queue_'))[1];
+  assert.deepEqual(Array.from(items, item => item.text), [first]);
+  f.doc.getElementById('cgq-injected-bulk-btn').click();
+  f.doc.getElementById('cgq-bulk-delimiter').value = 'hyphens';
+  f.doc.getElementById('cgq-bulk-textarea').value = 'line 1\nline 2\n---\nline 3\n\nline 4';
+  f.doc.getElementById('cgq-bulk-submit').click();
+  await tick(); await tick();
+  items = Object.entries(f.store).find(([key]) => key.startsWith('cgq_queue_'))[1];
+  assert.deepEqual(Array.from(items, item => item.text), [first, 'line 1\nline 2', 'line 3\n\nline 4']);
+});
+
 test('Gemini Queue button survives microphone/send replacement and composer rerender without duplicates', async () => {
   const f = await boot();
   const button = f.doc.getElementById('cgq-injected-btn');
