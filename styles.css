@@ -27,21 +27,16 @@
   --cgq-font: inherit; /* the host page's own font: no webfont download on ChatGPT / Gemini */
 }
 
-/* content.js sets cgq-dark-theme / cgq-light-theme; before that, follow the page, then the OS. */
-
-#cgq-composer-queue-panel,
-#cgq-widget,
-.cgq-modal-container {
+/* content.js mirrors ChatGPT / Gemini's own theme into html[data-cgq-theme]; until then, follow the OS. */
+:is(#cgq-composer-queue-panel, #cgq-widget, .cgq-modal-container, .cgq-injected-btn, #cgq-toast-container, .cgq-prompt-menu) {
   color-scheme: light dark;
 }
 
-:is(html.light, body.light, body.light-theme, [data-color-scheme="light"]) :is(#cgq-composer-queue-panel, #cgq-widget, .cgq-modal-container),
-.cgq-light-theme {
+html[data-cgq-theme="light"] :is(#cgq-composer-queue-panel, #cgq-widget, .cgq-modal-container, .cgq-injected-btn, #cgq-toast-container, .cgq-prompt-menu) {
   color-scheme: light;
 }
 
-:is(html.dark, body.dark, body.dark-theme, [data-color-scheme="dark"]) :is(#cgq-composer-queue-panel, #cgq-widget, .cgq-modal-container),
-.cgq-dark-theme {
+html[data-cgq-theme="dark"] :is(#cgq-composer-queue-panel, #cgq-widget, .cgq-modal-container, .cgq-injected-btn, #cgq-toast-container, .cgq-prompt-menu) {
   color-scheme: dark;
 }
 
@@ -318,21 +313,29 @@ body > #cgq-composer-queue-panel.cgq-collapsed {
   display: none !important;
 }
 
-/* Slim Activity Progress Bar */
-
+/* Activity progress: eases in, fades out after filling */
 .cgq-panel-progress {
-  height: 2px;
+  height: 0;
   width: 100%;
-  background: var(--cgq-border-subtle);
-  border-radius: 2px;
-  margin-top: 8px;
+  margin-top: 0;
   overflow: hidden;
+  border-radius: 2px;
+  background: var(--cgq-border-subtle);
+  opacity: 0;
+  transition: opacity 0.3s ease 0.15s, height 0.25s ease 0.2s, margin-top 0.25s ease 0.2s;
+}
+
+.cgq-panel-progress.is-visible {
+  height: 2px;
+  margin-top: 8px;
+  opacity: 1;
+  transition: opacity 0.2s ease, height 0.2s ease, margin-top 0.2s ease;
 }
 
 .cgq-panel-progress-fill {
   height: 100%;
   background: var(--cgq-primary);
-  transition: width 0.2s ease;
+  transition: width 0.25s ease;
 }
 
 /* Queue Item List */

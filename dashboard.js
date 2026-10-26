@@ -54,9 +54,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const singleBtnPause = document.getElementById('single-btn-pause');
   const singleBtnCopyAnswer = document.getElementById('single-btn-copy-answer');
   const singleChatActivity = document.getElementById('single-chat-activity');
-  const singleActivityText = document.getElementById('single-activity-text');
-  const singleActivityTimer = document.getElementById('single-activity-timer');
-  const singleActivityProgress = document.getElementById('single-activity-progress');
   const singleChatBody = document.getElementById('single-chat-body');
   const singleAnswersArea = document.getElementById('single-answers-area');
   const singleQueuePanel = document.getElementById('single-queue-panel');
@@ -1437,14 +1434,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // 2. Activity Bar
-    if (t.isPaused || !t.currentState || t.currentState === 'idle') {
-      singleChatActivity.style.display = 'none';
-    } else {
-      singleChatActivity.style.display = 'flex';
-      singleActivityText.textContent = t.currentAction || '処理中...';
-      singleActivityTimer.textContent = t.progressText || '';
-      singleActivityProgress.style.width = `${t.progressPercent || 0}%`;
-    }
+    updateActivityBar(singleChatActivity, t);
 
     // 3. Answers Area
     const ansSig = getAnswerSig(t);
@@ -2428,10 +2418,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Activity slot
-    const activitySlot = card.querySelector('.cgq-tab-activity-slot');
-    if (activitySlot) {
-      activitySlot.innerHTML = buildActivityHtml(t);
-    }
+    updateActivityBar(card.querySelector('.cgq-tab-activity-slot .cgq-chat-activity-bar'), t);
 
     // Composer queue controls
     const items = Array.isArray(t.items) ? t.items : [];
@@ -2555,17 +2542,37 @@ document.addEventListener('DOMContentLoaded', () => {
     return CGQReferences.formatHTML(`<p>${safe.replace(/\n/g, '<br>')}</p>`, document);
   }
 
+  const isActive = t => !(t.isPaused || !t.currentState || t.currentState === 'idle');
+
+  // One element per view, updated in place so it can ease in and fade out (.is-visible in dashboard.css).
   function buildActivityHtml(t) {
-    if (t.isPaused || !t.currentState || t.currentState === 'idle') return '';
     return `
-      <div class="cgq-chat-activity-bar">
+      <div class="cgq-chat-activity-bar${isActive(t) ? ' is-visible' : ''}">
         <div class="cgq-activity-row">
-          <span>${escapeHtml(t.currentAction || '処理中...')}</span>
-          <span>${escapeHtml(t.progressText || '')}</span>
+          <span class="cgq-activity-text">${escapeHtml(t.currentAction || '処理中...')}</span>
+          <span class="cgq-activity-timer">${escapeHtml(t.progressText || '')}</span>
         </div>
         <div class="cgq-progress-track"><div class="cgq-progress-fill" style="width: ${t.progressPercent || 0}%;"></div></div>
       </div>
     `;
+  }
+
+  function updateActivityBar(bar, t) {
+    if (!bar) return;
+    const active = isActive(t);
+    const fill = bar.querySelector('.cgq-progress-fill');
+    if (active && !bar.classList.contains('is-visible') && fill) {
+      fill.style.transition = 'none'; // restart from 0 without animating backwards
+      fill.style.width = '0%';
+      void fill.offsetWidth;
+      fill.style.transition = '';
+    }
+    bar.classList.toggle('is-visible', active);
+    if (active) {
+      bar.querySelector('.cgq-activity-text').textContent = t.currentAction || '処理中...';
+      bar.querySelector('.cgq-activity-timer').textContent = t.progressText || '';
+    }
+    if (fill) fill.style.width = `${active ? t.progressPercent || 0 : 100}%`;
   }
 
   function buildResultsHtml(t) {

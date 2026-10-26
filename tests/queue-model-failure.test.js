@@ -137,3 +137,108 @@ test('a prompt typed and then abandoned (paused mid-typing) is cleared and sent 
   assert.equal(typed, 2);
   assert.equal(queue.items.length, 0);
 });
+
+test('send confirmation can read the user turns of an existing ChatGPT conversation (no ReferenceError)', async t => {
+  const dom = new JSDOM(`<!doctype html><body><nav><div data-message-author-role="user">sidebar</div></nav>
+    <main><div data-user-message-bubble="true">前の質問</div></main>
+    <form><div contenteditable="true" role="textbox"></div></form></body>`, {
+    url: 'https://chatgpt.com/c/test', runScripts: 'outside-only', pretendToBeVisual: true
+  });
+  const { window } = dom;
+  t.after(() => dom.window.close());
+  const root = path.join(__dirname, '..');
+  window.eval(fs.readFileSync(path.join(root, 'references.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'model-picker.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
+  const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
+    .replace('  const queueManager = new QueueManager();',
+      '  globalThis.__queueTest = { HumanSimulator }; return;\n  const queueManager = new QueueManager();');
+  window.eval(source);
+  const { HumanSimulator } = window.__queueTest;
+  const last = HumanSimulator.lastUserNode();
+  assert.equal(last?.textContent, '前の質問', 'the conversation bubble is found and the sidebar copy is ignored');
+});
+
+test('a user draft left in the composer is sent once it stops changing, then the queued item follows', async t => {
+  const dom = new JSDOM('<!doctype html><body><textarea></textarea></body>', {
+    url: 'https://chatgpt.com/c/test', runScripts: 'outside-only', pretendToBeVisual: true
+  });
+  const { window } = dom;
+  t.after(() => dom.window.close());
+  const root = path.join(__dirname, '..');
+  window.eval(fs.readFileSync(path.join(root, 'references.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'model-picker.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
+  let clock = 1_000_000;
+  const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
+    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+      'const sleep = async (ms = 0) => { globalThis.__advance(ms); if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
+    .replace('  const queueManager = new QueueManager();',
+      '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();');
+  window.Date.now = () => clock;
+  window.__advance = ms => { clock += ms || 0; };
+  window.eval(source);
+  const { QueueManager, DOM, HumanSimulator } = window.__queueTest;
+  const queue = new QueueManager();
+  queue.items = [{ id: 'item-1', text: 'Queued prompt', model: 'auto', effort: 'auto' }];
+  Object.assign(queue.settings, { minReadDelay: 0, maxReadDelay: 0, soundNotification: false, autoScroll: false });
+  queue.notify = () => {};
+  queue.saveQueue = async () => {};
+  window.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } } };
+  const textarea = window.document.querySelector('textarea');
+  textarea.value = 'ユーザーの下書き';
+  DOM.isGenerating = () => false;
+  DOM.getPromptInput = () => textarea;
+  DOM.getLastResponseLength = () => 0;
+  DOM.getConversationLimitWarning = () => null;
+  const sent = [];
+  let iterations = 0;
+  HumanSimulator.typeText = async (el, text) => { el.value = text; return true; };
+  HumanSimulator.clickSend = async () => { sent.push(textarea.value); textarea.value = ''; return true; };
+  window.__stopLoop = () => sent.length >= 2 || ++iterations > 500;
+  await assert.rejects(queue.startLoop(), /TEST_STOP/);
+  assert.deepEqual(sent, ['ユーザーの下書き', 'Queued prompt']);
+  assert.equal(queue.items.length, 0);
+});
+
+test('a draft that keeps changing (the user is still typing) is never sent by the queue', async t => {
+  const dom = new JSDOM('<!doctype html><body><textarea></textarea></body>', {
+    url: 'https://chatgpt.com/c/test', runScripts: 'outside-only', pretendToBeVisual: true
+  });
+  const { window } = dom;
+  t.after(() => dom.window.close());
+  const root = path.join(__dirname, '..');
+  window.eval(fs.readFileSync(path.join(root, 'references.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'model-picker.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
+  let clock = 1_000_000;
+  const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
+    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+      'const sleep = async (ms = 0) => { globalThis.__advance(ms); if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
+    .replace('  const queueManager = new QueueManager();',
+      '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();');
+  window.Date.now = () => clock;
+  window.__advance = ms => { clock += ms || 0; };
+  window.eval(source);
+  const { QueueManager, DOM, HumanSimulator } = window.__queueTest;
+  const queue = new QueueManager();
+  queue.items = [{ id: 'item-1', text: 'Queued prompt', model: 'auto', effort: 'auto' }];
+  Object.assign(queue.settings, { minReadDelay: 0, maxReadDelay: 0, soundNotification: false, autoScroll: false });
+  queue.notify = () => {};
+  queue.saveQueue = async () => {};
+  window.chrome = { storage: { local: { get: async () => ({}), set: async () => {} } } };
+  const textarea = window.document.querySelector('textarea');
+  textarea.value = 'ユーザーの下書き';
+  DOM.isGenerating = () => false;
+  DOM.getPromptInput = () => textarea;
+  DOM.getLastResponseLength = () => 0;
+  DOM.getConversationLimitWarning = () => null;
+  const sent = [];
+  let iterations = 0;
+  HumanSimulator.typeText = async (el, text) => { el.value = text; return true; };
+  HumanSimulator.clickSend = async () => { sent.push(textarea.value); textarea.value = ''; return true; };
+  window.__stopLoop = () => { textarea.value += 'あ'; return sent.length > 0 || ++iterations > 300; };
+  await assert.rejects(queue.startLoop(), /TEST_STOP/);
+  assert.deepEqual(sent, []);
+  assert.equal(queue.items.length, 1);
+});

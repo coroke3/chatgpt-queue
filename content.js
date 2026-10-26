@@ -162,6 +162,26 @@
   // Helper Utilities
   // ==========================================================================
 
+  // Page chrome that must never be read as conversation content (sidebar, header, composer, our own UI).
+  const CHROME_SELECTOR = [
+    'nav', 'aside', 'header', 'form', 'rich-textarea',
+    'bard-sidenav', 'mat-sidenav',
+    '[role="navigation"]', '[role="complementary"]',
+    '#prompt-textarea', '#cgq-widget', '#cgq-composer-queue-panel'
+  ].join(', ');
+  // Progress bar that eases in, fills to 100% when its work ends, then fades out (see .is-visible in styles.css).
+  const setProgress = (track, fill, visible, percent) => {
+    if (!track || !fill) return;
+    if (visible && !track.classList.contains('is-visible')) {
+      fill.style.transition = 'none'; // restart from 0 without animating backwards
+      fill.style.width = '0%';
+      void fill.offsetWidth;
+      fill.style.transition = '';
+    }
+    track.classList.toggle('is-visible', visible);
+    fill.style.width = `${visible ? Math.max(0, Math.min(100, percent || 0)) : 100}%`;
+  };
+  const DRAFT_IDLE_MS = 3000; // a user draft unchanged this long is sent before the next queued item
   const normalizeDraft = value => String(value || '').replace(/\s+/g, ' ').trim();
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -1082,12 +1102,6 @@
 
     getLatestAnswer(lastSentPrompt) {
       try {
-        const CHROME_SELECTOR = [
-          'nav', 'aside', 'header', 'form', 'rich-textarea',
-          'bard-sidenav', 'mat-sidenav',
-          '[role="navigation"]', '[role="complementary"]',
-          '#prompt-textarea', '#cgq-widget', '#cgq-composer-queue-panel'
-        ].join(', ');
         const isAnswerNode = node => {
           if (node.closest(CHROME_SELECTOR)) return false;
           if (node.querySelectorAll('a[href*="/app/"], a[href*="/c/"]').length >= 3 && !node.closest('model-response, [data-message-author-role="assistant"], chat-window, article')) return false;
@@ -1235,12 +1249,6 @@
 
     getRecentQAHistory(lastSentPrompt) {
       try {
-        const CHROME_SELECTOR = [
-          'nav', 'aside', 'header', 'form', 'rich-textarea',
-          'bard-sidenav', 'mat-sidenav',
-          '[role="navigation"]', '[role="complementary"]',
-          '#prompt-textarea', '#cgq-widget', '#cgq-composer-queue-panel'
-        ].join(', ');
         const isAnswerNode = node => {
           if (node.closest(CHROME_SELECTOR)) return false;
           if (node.querySelectorAll('a[href*="/app/"], a[href*="/c/"]').length >= 3 && !node.closest('model-response, [data-message-author-role="assistant"], chat-window, article')) return false;
@@ -2827,6 +2835,21 @@
       this.loopRunning = true;
 
       while (true) {
+        try {
+          await this.runLoopStep();
+        } catch (error) {
+          if (error?.message === 'TEST_STOP') throw error;
+          // Any unexpected error: log it, release the composer lock and keep the queue alive.
+          console.warn('[ChatGPT Queue] loop error, recovering:', error);
+          this.sendingNow = false;
+          this.setState(this.isPaused ? QueueState.PAUSED : QueueState.IDLE, '');
+          await sleep(1500);
+        }
+      }
+    }
+
+    async runLoopStep() {
+      for (let once = true; once; once = false) {
         const isIdle = this.items.length === 0 && !DOM.isGenerating();
         const loopInterval = document.hidden ? (isIdle ? 2500 : 1000) : (isIdle ? 1000 : 400);
         await sleep(loopInterval);
@@ -3009,9 +3032,41 @@
             await sleep(300);
             continue;
           }
-          this.setState(QueueState.WAITING_GENERATION, '入力欄の下書きが空になるまで待機中...');
+          // The user's own draft: once it has stopped changing for DRAFT_IDLE_MS, send it as typed
+          // (tools and all); the queued item follows on the next round.
+          const now = Date.now();
+          if (this.draftSeen?.text !== draft) {
+            this.draftSeen = { text: draft, since: now };
+          }
+          const waitMs = DRAFT_IDLE_MS - (now - this.draftSeen.since);
+          if (waitMs > 0) {
+            this.setState(QueueState.WAITING_GENERATION, `入力欄の下書きを送信します (${Math.ceil(waitMs / 1000)}秒入力がなければ)`);
+            continue;
+          }
+          this.draftSeen = null;
+          this.setState(QueueState.PRE_SEND, '入力欄の下書きを送信中...');
+          let draftSent = false;
+          this.sendingNow = true;
+          try {
+            draftSent = await HumanSimulator.clickSend(draft);
+          } catch (error) {
+            console.warn('[ChatGPT Queue] draft send failed:', error);
+          } finally {
+            this.sendingNow = false;
+          }
+          if (draftSent) {
+            this.lastSentTimestamp = Date.now();
+            this.lastSentPrompt = draft;
+            this.setState(QueueState.IDLE, '入力欄の下書きを送信しました');
+            await sleep(2000);
+          } else {
+            this.isPaused = true;
+            this.setState(QueueState.PAUSED, '入力欄の下書きを送信できなかったため停止しました');
+            showToast('入力欄の下書きを送信できなかったため一時停止しました');
+          }
           continue;
         }
+        this.draftSeen = null;
         let promptTokens;
         try {
           promptTokens = await composerTools.prepare(nextItem.tools || [], () =>
@@ -3076,6 +3131,10 @@
         this.sendingNow = true;
         try {
           sent = await HumanSimulator.clickSend(nextItem.text);
+        } catch (error) {
+          // Never let a send error end the loop with the prompt left in the composer.
+          console.warn('[ChatGPT Queue] send failed:', error);
+          sent = false;
         } finally {
           this.sendingNow = false;
         }
@@ -3271,18 +3330,10 @@
           isDark = this.detectPageIsDark();
         }
 
-        this.panelElem.classList.toggle('cgq-dark-theme', isDark);
-        this.panelElem.classList.toggle('cgq-light-theme', !isDark);
-
-        if (this.widgetElem) {
-          this.widgetElem.classList.toggle('cgq-dark-theme', isDark);
-          this.widgetElem.classList.toggle('cgq-light-theme', !isDark);
-        }
-
-        document.querySelectorAll('.cgq-modal-container').forEach(el => {
-          el.classList.toggle('cgq-dark-theme', isDark);
-          el.classList.toggle('cgq-light-theme', !isDark);
-        });
+        // One attribute on <html>: every injected element (panel, Queue button, menus, modals, toasts)
+        // follows ChatGPT / Gemini's own light or dark theme through it.
+        const theme = isDark ? 'dark' : 'light';
+        if (document.documentElement.dataset.cgqTheme !== theme) document.documentElement.dataset.cgqTheme = theme;
       };
 
       const observer = new MutationObserver(applyTheme);
@@ -3373,7 +3424,7 @@
             </button>
           </div>
         </div>
-        <div class="cgq-panel-progress" id="cgq-panel-progress" style="display: none;">
+        <div class="cgq-panel-progress" id="cgq-panel-progress">
           <div class="cgq-panel-progress-fill" id="cgq-panel-progress-fill" style="width: 0%;"></div>
         </div>
         <div class="cgq-panel-list" id="cgq-panel-list"></div>
@@ -3541,12 +3592,9 @@
       }
 
       // Progress bar
-      if (!this.isCollapsed && (qm.currentState === QueueState.READING_DELAY || qm.currentState === QueueState.TYPING)) {
-        this.domProgress.style.display = 'block';
-        this.domProgressBar.style.width = `${qm.progressPercent}%`;
-      } else {
-        this.domProgress.style.display = 'none';
-      }
+      setProgress(this.domProgress, this.domProgressBar,
+        !this.isCollapsed && (qm.currentState === QueueState.READING_DELAY || qm.currentState === QueueState.TYPING),
+        qm.progressPercent);
 
       // Tooltip on chevron
       this.domChevron.title = this.isCollapsed ? '詳細キューを展開' : '小さく折りたたむ';
@@ -3588,7 +3636,10 @@
           subtext: `回答確認中 (${qm.progressText || '数秒'} 後に入力)...`
         };
       }
-      if (qm.currentState === QueueState.TYPING || qm.currentState === QueueState.PRE_SEND || qm.currentState === QueueState.PASTING) {
+      if (qm.currentState === QueueState.PRE_SEND) {
+        return { statusClass: 'typing', statusText: '送信中...', subtext: '送信ボタンをクリック中...' };
+      }
+      if (qm.currentState === QueueState.TYPING || qm.currentState === QueueState.PASTING) {
         return {
           statusClass: 'typing',
           statusText: `入力中 (${qm.progressPercent || 0}%)`,
@@ -3969,9 +4020,6 @@
 
       document.body.appendChild(modal);
 
-      const isDark = (this.panelElem && this.panelElem.classList.contains('cgq-dark-theme')) || (this.widgetElem && this.widgetElem.classList.contains('cgq-dark-theme'));
-      modal.querySelector('.cgq-modal-container').classList.toggle('cgq-dark-theme', isDark);
-      modal.querySelector('.cgq-modal-container').classList.toggle('cgq-light-theme', !isDark);
 
       let bulkTools = null;
       const closeModal = () => {
@@ -4195,9 +4243,6 @@
 
       document.body.appendChild(modal);
 
-      const isDark = (this.panelElem && this.panelElem.classList.contains('cgq-dark-theme')) || (this.widgetElem && this.widgetElem.classList.contains('cgq-dark-theme'));
-      modal.querySelector('.cgq-modal-container').classList.toggle('cgq-dark-theme', isDark);
-      modal.querySelector('.cgq-modal-container').classList.toggle('cgq-light-theme', !isDark);
 
       const closeModal = () => modal.remove();
       modal.querySelector('#cgq-modal-close').onclick = closeModal;

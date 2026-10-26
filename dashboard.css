@@ -470,17 +470,28 @@ button {
 /* Chat Activity Bar */
 
 .cgq-chat-activity-bar {
-  padding: 6px 24px;
-  background: transparent;
-  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 4px;
   flex-shrink: 0;
+  max-height: 0;
+  padding: 0 24px;
+  overflow: hidden;
+  opacity: 0;
+  border-bottom: 1px solid transparent;
+  transition: opacity 0.3s ease 0.15s, max-height 0.25s ease 0.2s, padding 0.25s ease 0.2s, border-color 0.25s ease 0.2s;
+}
+
+.cgq-chat-activity-bar.is-visible {
+  max-height: 48px;
+  padding: 6px 24px;
+  opacity: 1;
+  border-bottom-color: var(--border-subtle);
+  transition: opacity 0.2s ease, max-height 0.2s ease, padding 0.2s ease, border-color 0.2s ease;
 }
 
 .cgq-tab-card .cgq-chat-activity-bar {
-  padding: 6px 14px;
+  padding-inline: 14px;
 }
 
 .cgq-activity-row {
@@ -514,7 +525,7 @@ button {
 .cgq-progress-fill {
   height: 100%;
   background: var(--text-muted);
-  transition: width 0.18s ease;
+  transition: width 0.25s ease;
 }
 
 /* Chat Body (Scrollable Answers & Queued Panel) */
