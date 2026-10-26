@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Queue Manager</title>
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="48x48" href="icons/icon48.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/icon16.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@100;200;300;400;500;600;700;800;900&display=swap">
+  <!-- Gen Interface JP (https://gen.typesetting.jp/) - All Weights -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/100.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/200.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/300.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/400.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/500.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/600.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/700.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/800.css">
+  <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="composer-tools.css">
+</head>
+<body class="dark">
+  <div class="cgq-app-container">
+    <!-- ======================================================================
+         Left Sidebar: ChatGPT-style Navigation & Tab Chat List
+         ====================================================================== -->
+    <aside class="cgq-sidebar" id="dash-sidebar">
+      <!-- Sidebar Header & Logo -->
+      <div class="cgq-sidebar-header">
+        <div class="cgq-sidebar-brand">
+          <div class="cgq-brand-text">
+            <span class="cgq-brand-title">Queue Manager</span>
+          </div>
+        </div>
+        <div class="cgq-sidebar-header-actions">
+          <div class="cgq-new-chat-wrap">
+          <button class="cgq-icon-btn sm" id="btn-sidebar-new-chat" title="新しいチャットを開く (ChatGPT / Gemini)" aria-haspopup="menu">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <div class="cgq-new-chat-menu" id="sidebar-new-chat-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-platform="chatgpt">ChatGPT</button>
+            <button type="button" role="menuitem" data-platform="gemini">Gemini</button>
+          </div>
+        </div>
+          <button class="cgq-icon-btn sm" id="btn-sidebar-collapse" title="サイドバーを閉じる (Ctrl+B)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+              <polyline points="15 9 12 12 15 15"></polyline>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Navigation Modes (AI Chat Tool Single View vs Parallel Grid View) -->
+      <div class="cgq-sidebar-nav">
+        <button class="cgq-nav-item active" id="nav-all-grid" data-mode="grid" title="全チャット並列表示" aria-label="全チャット並列表示">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          <span>全チャット並列表示</span>
+        </button>
+        <button class="cgq-nav-item" id="nav-manage" data-mode="manage" title="タブ管理" aria-label="タブ管理">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="4" y1="21" x2="4" y2="14"></line>
+            <line x1="4" y1="10" x2="4" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12" y2="3"></line>
+            <line x1="20" y1="21" x2="20" y2="16"></line>
+            <line x1="20" y1="12" x2="20" y2="3"></line>
+          </svg>
+          <span>タブ管理</span>
+        </button>
+        <button class="cgq-nav-item" id="nav-bulk-add" title="プロンプト一括追加" aria-label="プロンプト一括追加">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="8" y1="6" x2="21" y2="6"></line>
+            <line x1="8" y1="12" x2="21" y2="12"></line>
+            <line x1="8" y1="18" x2="21" y2="18"></line>
+            <line x1="3" y1="6" x2="3.01" y2="6"></line>
+            <line x1="3" y1="12" x2="3.01" y2="12"></line>
+            <line x1="3" y1="18" x2="3.01" y2="18"></line>
+          </svg>
+          <span>一括追加</span>
+        </button>
+        <button class="cgq-nav-item" id="nav-settings" data-mode="settings" title="設定" aria-label="設定">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>設定</span>
+        </button>
+      </div>
+
+      <!-- Search & Filters -->
+      <!-- Chats Section Label -->
+      <div class="cgq-sidebar-section-title">
+        <span>開いているチャットタブ</span>
+        <span class="cgq-section-count" id="stat-active-tabs">0</span>
+      </div>
+
+      <!-- Chats Scrollable List -->
+      <div class="cgq-sidebar-chat-list" id="sidebar-chat-list">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <!-- Sidebar Footer -->
+      <div class="cgq-sidebar-footer">
+        <div class="cgq-footer-stats">
+          <div class="cgq-footer-stat-item">
+            <span class="cgq-stat-dot queue"></span>
+            <span>総キュー: <strong id="stat-total-items">0</strong></span>
+          </div>
+        </div>
+        <div class="cgq-footer-actions">
+          <button class="cgq-icon-btn sm" id="btn-refresh" title="手動更新">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
+            </svg>
+          </button>
+          <button class="cgq-icon-btn sm" id="btn-theme-toggle" title="テーマ切り替え (ダーク/ライト)">
+            <svg id="icon-theme" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+          </button>
+          <button class="cgq-icon-btn sm" id="btn-footer-settings" title="設定を開く">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ======================================================================
+         Main Area: Single Chat View (AI Chat style) OR All Chats Grid Mode
+         ====================================================================== -->
+    <main class="cgq-main-area">
+      <!-- ------------------------------------------------------------------
+           Mode 1: Single Chat Focus View (AI Chat tool layout)
+           ------------------------------------------------------------------ -->
+      <section class="cgq-view-container" id="view-single-chat" style="display: none;">
+        <!-- Top Chat Header -->
+        <header class="cgq-chat-header" id="single-chat-header">
+          <div class="cgq-chat-header-info">
+            <h1 class="cgq-chat-title" id="single-chat-title">チャットを選択してください</h1>
+            <div class="cgq-chat-status-pill idle" id="single-chat-status">
+              <span class="cgq-stat-dot" style="background: currentColor;"></span>
+              <span id="single-chat-status-text">待機中</span>
+            </div>
+            <!-- Active Model & Effort Badge -->
+            <div class="cgq-chat-model-badge" id="single-chat-model-badge" title="このチャットのアクティブモデル">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+              <span id="single-chat-model-text">Auto</span>
+              <span class="cgq-chat-effort-tag" id="single-chat-effort-text" style="display: none;">High</span>
+            </div>
+          </div>
+          <div class="cgq-chat-header-actions">
+            <button class="cgq-btn secondary sm" id="single-btn-focus-tab" title="このチャットのブラウザタブを開く">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+            <button class="cgq-btn secondary sm" id="single-btn-reload-tab" title="このチャットタブを再読み込み">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
+              </svg>
+            </button>
+            <button class="cgq-icon-btn" id="single-btn-pause" title="キューを一時停止/再開">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="4" width="4" height="16"></rect>
+                <rect x="14" y="4" width="4" height="16"></rect>
+              </svg>
+            </button>
+            <button class="cgq-icon-btn" id="single-btn-copy-answer" title="最新回答をコピー">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <!-- Chat Activity Bar (if typing / delay) -->
+        <div class="cgq-chat-activity-bar" id="single-chat-activity" style="display: none;">
+          <div class="cgq-activity-row">
+            <span class="cgq-activity-text" id="single-activity-text">処理中...</span>
+            <span class="cgq-activity-timer" id="single-activity-timer"></span>
+          </div>
+          <div class="cgq-progress-track">
+            <div class="cgq-progress-fill" id="single-activity-progress" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Chat Main Scrollable Body: Answers -->
+        <div class="cgq-chat-body" id="single-chat-body">
+          <div class="cgq-chat-content-wrapper">
+            <!-- Answers & Conversation Stream Area -->
+            <div class="cgq-chat-answers-area" id="single-answers-area">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Bottom Composer: Prompt Input Area (Never Destroyed!) -->
+        <div class="cgq-chat-composer-container">
+          <!-- Queued Messages Panel (Anchored right above input) -->
+          <div class="cgq-composer-queue-panel" id="single-queue-panel" data-queue-key="single" hidden>
+            <div class="cgq-panel-header">
+              <div class="cgq-panel-header-left">
+                <button type="button" class="cgq-panel-collapse" title="キューを開閉" aria-label="キューを開閉" aria-expanded="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+                <span class="cgq-panel-title">待機中のキュー</span>
+                <span class="cgq-panel-badge" id="single-queue-badge">0</span>
+                <span class="cgq-panel-subtext" id="single-queue-subtext">回答生成完了後に自動送信</span>
+              </div>
+              <div class="cgq-panel-header-right">
+                <button class="cgq-panel-btn" id="single-queue-btn-clear" title="キューをすべてクリア">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="cgq-panel-list" id="single-queue-list">
+              <!-- Queue Items rendered dynamically -->
+            </div>
+          </div>
+
+          <div class="cgq-chat-composer-box">
+            <textarea class="cgq-chat-textarea" id="single-chat-input" placeholder="このチャットのキューに追加するプロンプトを入力 (Enterでキューに追加, Shift+Enterで改行)..." rows="1"></textarea>
+            <div class="cgq-composer-actions">
+              <!-- Model & Effort Selector Controls (ChatGPT Style Dropdown UI) -->
+              <div class="cgq-composer-toolbar">
+                <!-- ChatGPT-style Model Pill Dropdown -->
+                <div class="cgq-dropdown-wrapper" id="single-model-wrapper">
+                  <button type="button" class="cgq-chatgpt-pill-btn" id="single-model-pill-btn" aria-haspopup="menu" aria-expanded="false" title="モデルを選択">
+                    <span class="cgq-pill-icon-box" id="single-model-pill-icon">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z"></path></svg>
+                    </span>
+                    <span class="cgq-pill-label" id="single-model-pill-label">Auto</span>
+                    <svg class="cgq-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                  <div class="cgq-chatgpt-popover" id="single-model-popover" style="display: none;">
+                    <div class="cgq-popover-header">モデルを選択</div>
+                    <div class="cgq-popover-list" id="single-model-popover-list">
+                      <!-- Dynamically populated from tab -->
+                    </div>
+                  </div>
+                </div>
+
+                <!-- ChatGPT-style Reasoning Effort Pill Dropdown (visible when model supports reasoning) -->
+                <div class="cgq-dropdown-wrapper" id="single-effort-wrapper" style="display: none;">
+                  <button type="button" class="cgq-chatgpt-pill-btn effort" id="single-effort-pill-btn" aria-haspopup="menu" aria-expanded="false" title="思考レベル (推論エフォート) を選択">
+                    <span class="cgq-pill-icon-box">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <circle cx="12" cy="12" r="9"></circle>
+                        <path d="M12 7v5l3 3"></path>
+                      </svg>
+                    </span>
+                    <span class="cgq-pill-label" id="single-effort-pill-label">Auto</span>
+                    <svg class="cgq-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                  <div class="cgq-chatgpt-popover" id="single-effort-popover" style="display: none;">
+                    <div class="cgq-popover-header">思考レベル / 思考の深さ</div>
+                    <div class="cgq-popover-list" id="single-effort-popover-list">
+                      <!-- Dynamically populated from tab -->
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Hidden backup selects for state compatibility -->
+                <select id="single-model-select" style="display: none;"></select>
+                <select id="single-effort-select" style="display: none;"></select>
+
+                <!-- Bulk Add Button (1 prompt per line) -->
+                <button type="button" class="cgq-chatgpt-pill-btn" id="single-btn-bulk-add" title="プロンプトを一括追加 (1行1プロンプト)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                  </svg>
+                  <span class="cgq-pill-label">一括追加</span>
+                </button>
+              </div>
+              <button class="cgq-composer-send-btn" id="single-btn-send" title="キューに追加 (Enter)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="12" y1="19" x2="12" y2="5"></line>
+                  <polyline points="5 12 12 5 19 12"></polyline>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------------
+           Mode 2: All Chats Parallel Grid View (横並び並列表示モード)
+           ------------------------------------------------------------------ -->
+      <section class="cgq-view-container" id="view-all-grid-container" style="display: flex;">
+        <!-- Floating Sidebar Open Pill for Grid View -->
+        <button class="cgq-floating-sidebar-open" id="btn-sidebar-open-grid" title="サイドバーを開く (Ctrl+B)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="9" y1="3" x2="9" y2="21"></line>
+            <polyline points="13 9 16 12 13 15"></polyline>
+          </svg>
+          <span>メニュー</span>
+        </button>
+
+        <!-- Header hidden per user request: 上部のタイトル表示いらない (高さを100%フル活用) -->
+        <header class="cgq-grid-header" style="display: none;">
+          <div class="cgq-grid-header-left">
+            <h2>すべてのチャット並列表示モード</h2>
+            <p>開いているすべてのChatGPT / Geminiタブの稼働状況とキュー・回答を一括監視</p>
+          </div>
+          <div class="cgq-grid-header-right">
+            <button class="cgq-btn secondary sm" id="btn-grid-new-gemini" title="新しいGeminiを開く">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>+ Gemini</span>
+            </button>
+            <button class="cgq-btn primary sm" id="btn-grid-new-chatgpt" title="新しいChatGPTを開く">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>+ ChatGPT</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="cgq-grid-scroll-area">
+          <div class="cgq-tabs-grid" id="tabs-grid">
+            <!-- Multi-tab parallel cards rendered dynamically -->
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------------
+           Tab Management: choose which chats stay out of the parallel view
+           ------------------------------------------------------------------ -->
+      <section class="cgq-view-container cgq-manage-view" id="view-manage" style="display: none;">
+        <div class="cgq-manage-panel">
+          <header class="cgq-manage-header">
+            <div>
+              <h2>タブ管理</h2>
+              <p>並列表示に含めるチャットを選べます。外したチャットも左のチャット一覧から開けます。</p>
+            </div>
+            <span class="cgq-manage-count" id="manage-count"></span>
+          </header>
+          <div class="cgq-manage-list" id="manage-list"></div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------------
+           Settings View: Queue Manager & AI Chat preferences
+           ------------------------------------------------------------------ -->
+      <section class="cgq-view-container cgq-settings-view" id="view-settings" style="display: none;">
+        <div class="cgq-settings-panel">
+          <header class="cgq-settings-header">
+            <div>
+              <h2>設定</h2>
+              <p>Queue Manager および各チャットタブでの自動化・入力動作・外観を設定します。</p>
+            </div>
+            <div class="cgq-settings-header-actions">
+              <button class="cgq-btn secondary sm" id="btn-settings-reset" title="初期設定に戻す">初期値に戻す</button>
+              <button class="cgq-btn primary sm" id="btn-settings-save" title="設定を保存">設定を保存</button>
+            </div>
+          </header>
+
+          <div class="cgq-settings-sections">
+            <!-- Card 1: 入力シミュレーション (人間風挙動) -->
+            <div class="cgq-settings-card">
+              <div class="cgq-settings-card-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                  <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M6 12h.001M10 12h.001M14 12h.001M18 12h.001M8 16h8"></path>
+                </svg>
+                <div>
+                  <h3>入力シミュレーション (人間風挙動)</h3>
+                  <p>AIチャットへのテキスト入力時のタイピング速度や打鍵シミュレーションを調整します。</p>
+                </div>
+              </div>
+              <div class="cgq-settings-group">
+                <!-- typingMode -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">入力方式</span>
+                    <span class="cgq-settings-desc">ChatGPT / Gemini へのプロンプト入力形式を選択します</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <select class="cgq-settings-select" id="setting-typing-mode">
+                      <option value="mixed">人間風ミックス (タイピング ＋ 自動ペースト) [推奨]</option>
+                      <option value="human">常時タイピング (1文字ずつ自然打鍵)</option>
+                      <option value="fast">高速タイピング (テンポよく入力)</option>
+                      <option value="instant">即時ペースト (一瞬で貼り付け)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- simulateTypos -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">打ち間違い (タイポ & 訂正) の再現</span>
+                    <span class="cgq-settings-desc">たまに隣のキーを誤打し、Backspaceキーで打ち直す動作を再現します</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-simulate-typos">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- punctuationPause -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">句読点・改行での一息ポーズ</span>
+                    <span class="cgq-settings-desc">読点（、）や句点（。）・改行でわずかに休止し、より人間らしく入力します</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-punctuation-pause">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- typingJitter -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">キーストロークの自然なゆらぎ</span>
+                    <span class="cgq-settings-desc">キー入力ごとに単語バーストとミリ秒単位の揺らぎを加えます</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-typing-jitter">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- typingSpeed -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">タイピング速度基準</span>
+                    <span class="cgq-settings-desc">1文字あたりの標準打鍵間隔 (<span id="setting-val-speed">45</span> ms/文字)</span>
+                  </div>
+                  <div class="cgq-settings-control range-control">
+                    <input type="range" class="cgq-settings-range" id="setting-typing-speed" min="20" max="120" step="5" value="45">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 2: 思考・待機時間 & 長時間稼働 -->
+            <div class="cgq-settings-card">
+              <div class="cgq-settings-card-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <div>
+                  <h3>思考・読書待機時間 & 長時間稼働</h3>
+                  <p>AIの回答生成完了後、次キュー送信までの読書・思考待機時間や疲労曲線を設定します。</p>
+                </div>
+              </div>
+              <div class="cgq-settings-group">
+                <!-- minReadDelay / maxReadDelay -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">基本待機時間</span>
+                    <span class="cgq-settings-desc">回答完了後の基本待機幅: <strong id="setting-val-read">2.5s - 4.5s</strong></span>
+                  </div>
+                  <div class="cgq-settings-control range-dual">
+                    <div class="range-sub">
+                      <span>最小:</span>
+                      <input type="range" class="cgq-settings-range" id="setting-min-read" min="0.5" max="10" step="0.5" value="2.5">
+                    </div>
+                    <div class="range-sub">
+                      <span>最大:</span>
+                      <input type="range" class="cgq-settings-range" id="setting-max-read" min="1.0" max="15" step="0.5" value="4.5">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- dynamicDelay -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">長文回答時の自動読書延長</span>
+                    <span class="cgq-settings-desc">回答の文字数に応じて、読む時間を自動的に動的延長します</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-dynamic-delay">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- continuousFatigue -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">2〜3時間継続稼働時の休憩・思考待機延長 (最大10分)</span>
+                    <span class="cgq-settings-desc">2〜3時間連続稼働しているとき、思考・休憩待機時間を最大10分（600秒）まで緩やかに伸ばします</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-continuous-fatigue">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3: キュー送信制御 & 自動追加 -->
+            <div class="cgq-settings-card">
+              <div class="cgq-settings-card-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+                <div>
+                  <h3>キュー送信制御 & 自動追加</h3>
+                  <p>キーボード操作や送信タイミングの挙動をカスタマイズします。</p>
+                </div>
+              </div>
+              <div class="cgq-settings-group">
+                <!-- enterToQueue -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">Enterキーでキュー追加 / 送信</span>
+                    <span class="cgq-settings-desc">ON: Enterで送信・キュー追加（Shift+Enterで改行）/ OFF: Enterで改行、Ctrl+Enter（またはCmd+Enter）で送信・キュー追加（複数行の長文・命令入力に最適）</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-enter-queue">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- soundNotification -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">キュー全消化時のチャイム音</span>
+                    <span class="cgq-settings-desc">すべてのキュー送信と回答完了時にチャイム音を再生します</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-sound-notification">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- autoScroll -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">最新回答への自動スクロール</span>
+                    <span class="cgq-settings-desc">新しい回答が生成されるたびに画面最下部へスムーズスクロールします</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-auto-scroll">
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- autoReloadOnDisconnect -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">接続切断時の自動再読み込み (2分以内)</span>
+                    <span class="cgq-settings-desc">ChatGPTで「接続が途切れました。回答全体の受信を待っています」が表示された際、2分以内に自動で再読み込みします</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <label class="cgq-switch">
+                      <input type="checkbox" id="setting-auto-reload" checked>
+                      <span class="cgq-switch-track"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 4: 外観・表示設定 -->
+            <div class="cgq-settings-card">
+              <div class="cgq-settings-card-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="5"></circle>
+                  <line x1="12" y1="1" x2="12" y2="3"></line>
+                  <line x1="12" y1="21" x2="12" y2="23"></line>
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                  <line x1="1" y1="12" x2="3" y2="12"></line>
+                  <line x1="21" y1="12" x2="23" y2="12"></line>
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+                <div>
+                  <h3>外観・表示設定</h3>
+                  <p>Queue Manager のカラーテーマや単一チャット表示の履歴モードを設定します。</p>
+                </div>
+              </div>
+              <div class="cgq-settings-group">
+                <!-- themeMode -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">カラーテーマ</span>
+                    <span class="cgq-settings-desc">ダークモード / ライトモード / OS設定連動を切り替えます</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <select class="cgq-settings-select" id="setting-theme-mode">
+                      <option value="auto">自動 (OS / システム設定連動)</option>
+                      <option value="dark">ダークモード (Dark)</option>
+                      <option value="light">ライトモード (Light)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- singleChatHistoryMode -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">単一チャットの初期表示履歴</span>
+                    <span class="cgq-settings-desc">単一チャット画面を開いたときに表示する履歴の初期設定です</span>
+                  </div>
+                  <div class="cgq-settings-control">
+                    <select class="cgq-settings-select" id="setting-history-mode">
+                      <option value="all">すべての履歴を表示</option>
+                      <option value="latest">最新のターンのみ表示</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Empty State: No AI Chat Tabs Open -->
+      <div class="cgq-dash-empty" id="empty-state" style="display: none;">
+        <div class="cgq-empty-icon-circle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+        </div>
+        <h2>開いているAIチャットタブが見つかりません</h2>
+        <p>ChatGPTまたはGeminiのタブを開くと、ここに各タブのキュー状況と回答結果がリアルタイムで表示されます。</p>
+        <div style="display: flex; gap: 10px; justify-content: center; margin-top: 16px; flex-wrap: wrap;">
+          <button class="cgq-btn primary" id="btn-empty-open-chatgpt">
+            ChatGPTを開く
+          </button>
+          <button class="cgq-btn secondary" id="btn-empty-open-gemini">
+            Geminiを開く
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Bulk Prompt Insertion Modal (1 prompt per line) -->
+  <div class="cgq-modal-overlay" id="dashboard-bulk-modal" style="display: none;">
+    <div class="cgq-modal-container">
+      <div class="cgq-modal-header">
+        <span>プロンプトの一括追加（1行1プロンプト）</span>
+        <button type="button" class="cgq-icon-btn" id="bulk-modal-close" title="閉じる">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="cgq-modal-body">
+        <div style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">
+          改行で区切られたプロンプトを1行ずつ個別のキューアイテムとして一括登録します。
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-weight: 600; color: var(--text);">追加対象のタブ</label>
+          <select id="bulk-modal-target-tab" style="padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-size: 12.5px;"></select>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; font-weight: 600; color: var(--text);">区切り方式</label>
+          <select id="bulk-modal-delimiter" style="padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-size: 12.5px;">
+            <option value="line" selected>1行ごとに1プロンプト (推奨)</option>
+            <option value="empty_line">空行（2連続改行）で区切る</option>
+            <option value="hyphens">--- (ハイフン3つ) で区切る</option>
+          </select>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-size: 12px; font-weight: 600; color: var(--text);">プロンプト一覧</label>
+            <span id="bulk-modal-counter" style="font-size: 11.5px; color: var(--text-muted); font-weight: 500;">0件検出</span>
+          </div>
+          <textarea id="bulk-modal-textarea" rows="8" placeholder="ここに1行ずつプロンプトを入力または貼り付けしてください...&#10;例:&#10;第1章の要約を作成して&#10;第2章の登場人物を箇条書きにして&#10;全体のアクションプランを提案して" style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-family: inherit; font-size: 12.5px; line-height: 1.5; resize: vertical;"></textarea>
+        </div>
+      </div>
+      <div class="cgq-modal-footer">
+        <button type="button" class="cgq-btn secondary" id="bulk-modal-cancel">キャンセル</button>
+        <button type="button" class="cgq-btn primary" id="bulk-modal-submit">一括追加する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Toast Feedback -->
+  <div id="cgq-dash-toast" class="cgq-dash-toast" style="display: none;"></div>
+
+  <!-- External Libraries: Local marked.js & mermaid.js for Markdown & Diagram rendering -->
+  <script src="libs/marked.min.js"></script>
+  <script src="libs/mermaid.min.js"></script>
+  <script src="typography.js"></script>
+  <script src="references.js"></script>
+  <script src="composer-tools.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

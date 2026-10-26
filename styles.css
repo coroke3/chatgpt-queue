@@ -1,0 +1,1030 @@
+/* ==========================================================================
+   ChatGPT Queue Assistant - Styles (Per-Tab Independent Queues)
+   ========================================================================== */
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/100.css');
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/200.css');
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/300.css');
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/400.css');
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/500.css');
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/600.css');
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/700.css');
+@import url('https://cdn.jsdelivr.net/npm/gen-interface-jp@0.8.0/cdn/800.css');
+
+:root {
+  --cgq-primary: #0d0d0d;
+  --cgq-primary-hover: #262626;
+  --cgq-primary-light: rgba(0, 0, 0, 0.08);
+  --cgq-accent: #525252;
+  
+  /* Light theme defaults matching ChatGPT & Queue Manager */
+  --cgq-bg: #ffffff;
+  --cgq-bg-card: #f9f9f9;
+  --cgq-bg-card-hover: #f4f4f4;
+  --cgq-bg-subtle: #f0f0f0;
+  --cgq-border: #e5e5e5;
+  --cgq-border-subtle: #efefef;
+  --cgq-text-main: #0d0d0d;
+  --cgq-text-secondary: #5d5d5d;
+  --cgq-text-muted: #8e8e8e;
+  --cgq-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --cgq-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.05);
+  
+  --cgq-status-idle-bg: #ecfdf5;
+  --cgq-status-idle-text: #047857;
+  --cgq-status-waiting-bg: #eff6ff;
+  --cgq-status-waiting-text: #1d4ed8;
+  --cgq-status-typing-bg: #f5f3ff;
+  --cgq-status-typing-text: #6d28d9;
+  --cgq-status-paused-bg: #fffbeb;
+  --cgq-status-paused-text: #b45309;
+
+  --cgq-warning: #71717a;
+  --cgq-warning-light: rgba(0, 0, 0, 0.06);
+  --cgq-danger: #71717a;
+  --cgq-danger-hover: #18181b;
+  --cgq-info: #52525b;
+  --cgq-success: #18181b;
+  --cgq-radius: 16px;
+  --cgq-radius-pill: 9999px;
+
+  /* Theme-aware scrollbars */
+  --cgq-scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --cgq-scrollbar-thumb-hover: rgba(0, 0, 0, 0.36);
+  --cgq-scrollbar-track: transparent;
+  --cgq-font: 'Gen Interface JP', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Explicit Light mode styling for mini window, injected buttons and modals */
+#cgq-composer-queue-panel.cgq-light-theme,
+html.light #cgq-composer-queue-panel:not(.cgq-dark-theme),
+body.light #cgq-composer-queue-panel:not(.cgq-dark-theme),
+body.light-theme #cgq-composer-queue-panel:not(.cgq-dark-theme),
+[data-color-scheme="light"] #cgq-composer-queue-panel:not(.cgq-dark-theme),
+#cgq-widget.cgq-light-theme,
+.cgq-modal-container.cgq-light-theme {
+  --cgq-primary: #0d0d0d;
+  --cgq-primary-hover: #262626;
+  --cgq-primary-light: rgba(0, 0, 0, 0.08);
+  --cgq-accent: #525252;
+
+  --cgq-bg: #ffffff;
+  --cgq-bg-card: #f9f9f9;
+  --cgq-bg-card-hover: #f4f4f4;
+  --cgq-bg-subtle: #f0f0f0;
+  --cgq-border: #e5e5e5;
+  --cgq-border-subtle: #efefef;
+  --cgq-text-main: #0d0d0d;
+  --cgq-text-secondary: #5d5d5d;
+  --cgq-text-muted: #8e8e8e;
+  --cgq-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  --cgq-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.06);
+
+  --cgq-status-idle-bg: #ecfdf5;
+  --cgq-status-idle-text: #047857;
+  --cgq-status-waiting-bg: #eff6ff;
+  --cgq-status-waiting-text: #1d4ed8;
+  --cgq-status-typing-bg: #f5f3ff;
+  --cgq-status-typing-text: #6d28d9;
+  --cgq-status-paused-bg: #fffbeb;
+  --cgq-status-paused-text: #b45309;
+
+  --cgq-warning: #71717a;
+  --cgq-warning-light: rgba(0, 0, 0, 0.06);
+  --cgq-danger: #71717a;
+  --cgq-danger-hover: #18181b;
+  --cgq-info: #52525b;
+  --cgq-success: #18181b;
+}
+
+/* Dark mode explicit overrides matching ChatGPT True Dark (#212121) */
+#cgq-composer-queue-panel.cgq-dark-theme,
+html.dark #cgq-composer-queue-panel:not(.cgq-light-theme),
+body.dark #cgq-composer-queue-panel:not(.cgq-light-theme),
+body.dark-theme #cgq-composer-queue-panel:not(.cgq-light-theme),
+[data-color-scheme="dark"] #cgq-composer-queue-panel:not(.cgq-light-theme),
+#cgq-widget.cgq-dark-theme,
+.cgq-modal-container.cgq-dark-theme {
+  --cgq-primary: #ececec;
+  --cgq-primary-hover: #ffffff;
+  --cgq-primary-light: rgba(255, 255, 255, 0.12);
+  --cgq-accent: #a1a1aa;
+
+  --cgq-bg: #212121;
+  --cgq-bg-card: #282828;
+  --cgq-bg-card-hover: #323232;
+  --cgq-bg-subtle: #2a2a2a;
+  --cgq-border: #383838;
+  --cgq-border-subtle: #2d2d2d;
+  --cgq-text-main: #ececec;
+  --cgq-text-secondary: #b4b4b4;
+  --cgq-text-muted: #8e8ea0;
+  --cgq-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  --cgq-shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.3);
+  --cgq-warning-light: rgba(255, 255, 255, 0.1);
+
+  --cgq-status-idle-bg: rgba(52, 211, 153, 0.14);
+  --cgq-status-idle-text: #6ee7b7;
+  --cgq-status-waiting-bg: rgba(96, 165, 250, 0.14);
+  --cgq-status-waiting-text: #93c5fd;
+  --cgq-status-typing-bg: rgba(167, 139, 250, 0.14);
+  --cgq-status-typing-text: #c4b5fd;
+  --cgq-status-paused-bg: rgba(251, 191, 36, 0.14);
+  --cgq-status-paused-text: #fcd34d;
+
+  --cgq-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --cgq-scrollbar-thumb-hover: rgba(255, 255, 255, 0.38);
+  --cgq-scrollbar-track: transparent;
+}
+
+#cgq-composer-queue-panel,
+#cgq-widget,
+.cgq-modal-container,
+.cgq-modal-body,
+#cgq-queue-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cgq-scrollbar-thumb) var(--cgq-scrollbar-track);
+}
+
+#cgq-composer-queue-panel::-webkit-scrollbar,
+#cgq-widget::-webkit-scrollbar,
+.cgq-modal-container::-webkit-scrollbar,
+.cgq-modal-body::-webkit-scrollbar,
+#cgq-queue-list::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+#cgq-composer-queue-panel::-webkit-scrollbar-track,
+#cgq-widget::-webkit-scrollbar-track,
+.cgq-modal-container::-webkit-scrollbar-track,
+.cgq-modal-body::-webkit-scrollbar-track,
+#cgq-queue-list::-webkit-scrollbar-track {
+  background: var(--cgq-scrollbar-track);
+}
+
+#cgq-composer-queue-panel::-webkit-scrollbar-thumb,
+#cgq-widget::-webkit-scrollbar-thumb,
+.cgq-modal-container::-webkit-scrollbar-thumb,
+.cgq-modal-body::-webkit-scrollbar-thumb,
+#cgq-queue-list::-webkit-scrollbar-thumb {
+  background-color: var(--cgq-scrollbar-thumb);
+  border-radius: 9999px;
+}
+
+#cgq-composer-queue-panel::-webkit-scrollbar-thumb:hover,
+#cgq-widget::-webkit-scrollbar-thumb:hover,
+.cgq-modal-container::-webkit-scrollbar-thumb:hover,
+.cgq-modal-body::-webkit-scrollbar-thumb:hover,
+#cgq-queue-list::-webkit-scrollbar-thumb:hover {
+  background-color: var(--cgq-scrollbar-thumb-hover);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) #cgq-composer-queue-panel:not(.cgq-light-theme):not(.cgq-dark-theme),
+  :root:not(.light) #cgq-widget:not(.cgq-light-theme):not(.cgq-dark-theme),
+  :root:not(.light) .cgq-modal-container:not(.cgq-light-theme):not(.cgq-dark-theme) {
+    --cgq-primary: #ececec;
+    --cgq-primary-hover: #ffffff;
+    --cgq-primary-light: rgba(255, 255, 255, 0.12);
+    --cgq-accent: #a1a1aa;
+
+    --cgq-bg: #212121;
+    --cgq-bg-card: #282828;
+    --cgq-bg-card-hover: #323232;
+    --cgq-bg-subtle: #2a2a2a;
+    --cgq-border: #383838;
+    --cgq-border-subtle: #2d2d2d;
+    --cgq-text-main: #ececec;
+    --cgq-text-secondary: #b4b4b4;
+    --cgq-text-muted: #8e8ea0;
+    --cgq-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+    --cgq-shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.3);
+
+    --cgq-status-idle-bg: rgba(52, 211, 153, 0.14);
+    --cgq-status-idle-text: #6ee7b7;
+    --cgq-status-waiting-bg: rgba(96, 165, 250, 0.14);
+    --cgq-status-waiting-text: #93c5fd;
+    --cgq-status-typing-bg: rgba(167, 139, 250, 0.14);
+    --cgq-status-typing-text: #c4b5fd;
+    --cgq-status-paused-bg: rgba(251, 191, 36, 0.14);
+    --cgq-status-paused-text: #fcd34d;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Composer Queued Messages Panel (Anchored Directly Above ChatGPT Composer)
+   -------------------------------------------------------------------------- */
+#cgq-composer-queue-panel {
+  box-sizing: border-box;
+  background-color: var(--cgq-bg);
+  border: 1px solid var(--cgq-border);
+  box-shadow: var(--cgq-shadow);
+  color: var(--cgq-text-main);
+  font-family: var(--cgq-font);
+  font-weight: var(--cgq-font-weight, 300);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  position: relative;
+  z-index: 50;
+}
+
+/* Expanded State */
+#cgq-composer-queue-panel:not(.cgq-collapsed) {
+  width: min(100%, 768px);
+  max-width: 100%;
+  max-height: min(420px, calc(100vh - 160px));
+  margin: 0 auto 10px auto;
+  padding: 10px 16px 12px 16px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Collapsed Mini Pill State (小さくたたんだ状態) */
+#cgq-composer-queue-panel.cgq-collapsed {
+  width: auto;
+  max-width: fit-content;
+  min-width: 0;
+  margin: 0 auto 8px auto;
+  padding: 3px 6px 3px 10px;
+  border-radius: var(--cgq-radius-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--cgq-shadow-sm);
+  cursor: pointer;
+  background-color: var(--cgq-bg);
+}
+
+#cgq-composer-queue-panel.cgq-collapsed:hover {
+  border-color: var(--cgq-text-muted);
+  box-shadow: var(--cgq-shadow);
+}
+
+/* Fallback when placed directly under body */
+body > #cgq-composer-queue-panel:not(.cgq-collapsed) {
+  position: fixed;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(768px, calc(100vw - 32px));
+  max-height: min(420px, calc(100vh - 160px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 9999;
+}
+
+body > #cgq-composer-queue-panel.cgq-collapsed {
+  position: fixed;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+}
+
+#cgq-composer-queue-panel * {
+  box-sizing: border-box;
+}
+
+/* Header */
+.cgq-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+#cgq-composer-queue-panel.cgq-collapsed .cgq-panel-header {
+  width: auto;
+  gap: 8px;
+}
+
+.cgq-panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+#cgq-composer-queue-panel.cgq-collapsed .cgq-panel-header-left {
+  flex: none;
+  gap: 6px;
+}
+
+/* Status Pill (Managerテイスト) */
+.cgq-status-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--cgq-radius-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--cgq-status-idle-bg);
+  color: var(--cgq-status-idle-text);
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+
+.cgq-status-pill.waiting {
+  background: var(--cgq-status-waiting-bg);
+  color: var(--cgq-status-waiting-text);
+}
+
+.cgq-status-pill.typing {
+  background: var(--cgq-status-typing-bg);
+  color: var(--cgq-status-typing-text);
+}
+
+.cgq-status-pill.paused {
+  background: var(--cgq-status-paused-bg);
+  color: var(--cgq-status-paused-text);
+}
+
+.cgq-stat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.cgq-status-pill.waiting .cgq-stat-dot {
+  animation: cgq-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cgq-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+
+/* Count Badge (Managerテイスト) */
+.cgq-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--cgq-bg-subtle);
+  border: 1px solid var(--cgq-border-subtle);
+  border-radius: var(--cgq-radius-pill);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cgq-text-secondary);
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.cgq-count-badge svg {
+  color: var(--cgq-text-muted);
+}
+
+.cgq-panel-subtext {
+  font-size: 12px;
+  color: var(--cgq-text-muted);
+  font-weight: var(--cgq-font-weight, 300);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cgq-composer-queue-panel.cgq-collapsed .cgq-panel-subtext {
+  display: none !important;
+}
+
+/* Action Buttons */
+.cgq-panel-header-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.cgq-panel-btn {
+  background: transparent;
+  border: none;
+  color: var(--cgq-text-muted);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.cgq-panel-btn:hover {
+  background: var(--cgq-bg-card-hover);
+  color: var(--cgq-text-main);
+}
+
+.cgq-panel-btn.active {
+  color: var(--cgq-warning);
+}
+
+.cgq-chevron-icon {
+  transition: transform 0.2s ease;
+}
+
+#cgq-composer-queue-panel.cgq-collapsed .cgq-chevron-icon {
+  transform: rotate(0deg);
+}
+
+#cgq-composer-queue-panel:not(.cgq-collapsed) .cgq-chevron-icon {
+  transform: rotate(-180deg);
+}
+
+/* Collapsed Hidden Elements */
+#cgq-composer-queue-panel.cgq-collapsed .cgq-panel-list,
+#cgq-composer-queue-panel.cgq-collapsed .cgq-panel-progress {
+  display: none !important;
+}
+
+/* Slim Activity Progress Bar */
+.cgq-panel-progress {
+  height: 2px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+:root:not(.dark) .cgq-panel-progress,
+#cgq-composer-queue-panel.cgq-light-theme .cgq-panel-progress {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.cgq-panel-progress-fill {
+  height: 100%;
+  background: var(--cgq-primary);
+  transition: width 0.2s ease;
+}
+
+/* Queue Item List */
+.cgq-panel-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.cgq-panel-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  gap: 12px;
+}
+
+.cgq-panel-item + .cgq-panel-item {
+  border-top: 1px solid var(--cgq-border-subtle);
+  padding-top: 8px;
+}
+
+.cgq-panel-item.cgq-active {
+  position: relative;
+}
+
+.cgq-item-text {
+  font-size: 13.5px;
+  font-weight: var(--cgq-font-weight, 300);
+  color: var(--cgq-text-main);
+  line-height: 1.45;
+  word-break: break-word;
+  flex: 1;
+  user-select: text;
+}
+
+.cgq-item-model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--cgq-bg-subtle);
+  border: 1px solid var(--cgq-border-subtle);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--cgq-text-secondary);
+  margin-left: 6px;
+}
+
+.cgq-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.cgq-item-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--cgq-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.cgq-item-btn:hover {
+  background: var(--cgq-bg-card-hover);
+  color: var(--cgq-text-main);
+}
+
+.cgq-item-btn.delete:hover {
+  color: var(--cgq-danger);
+  background: var(--cgq-bg-card-hover);
+}
+
+.cgq-item-btn.send-now:hover {
+  color: var(--cgq-text-main);
+  background: var(--cgq-bg-card-hover);
+}
+
+.cgq-item-btn.edit:hover {
+  color: var(--cgq-text-main);
+  background: var(--cgq-bg-subtle);
+}
+
+/* Editing State */
+.cgq-panel-item.cgq-editing {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.cgq-item-edit-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.cgq-edit-textarea {
+  width: 100%;
+  font-size: 13.5px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--cgq-border);
+  background: var(--cgq-bg-card);
+  color: var(--cgq-text-main);
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.cgq-edit-textarea:focus {
+  border-color: var(--cgq-primary);
+  box-shadow: 0 0 0 2px var(--cgq-primary-light);
+}
+
+.cgq-edit-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* --------------------------------------------------------------------------
+   Injected Button next to ChatGPT Send Button
+   -------------------------------------------------------------------------- */
+.cgq-injected-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--cgq-bg-card);
+  color: var(--cgq-text-main);
+  border: 1px solid var(--cgq-border);
+  border-radius: 9999px;
+  padding: 6px 13px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-right: 6px;
+  transition: all 0.15s ease;
+  height: 32px;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.cgq-injected-btn:hover {
+  background: var(--cgq-bg-card-hover);
+  border-color: var(--cgq-text-muted);
+}
+
+.cgq-injected-btn:active {
+  transform: scale(0.98);
+}
+
+.cgq-injected-btn svg {
+  width: 13px;
+  height: 13px;
+  color: var(--cgq-text-main);
+}
+
+/* --------------------------------------------------------------------------
+   Modals
+   -------------------------------------------------------------------------- */
+.cgq-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: cgq-fade-in 0.15s ease-out;
+}
+
+@keyframes cgq-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cgq-modal-container {
+  background: var(--cgq-bg);
+  border: 1px solid var(--cgq-border);
+  border-radius: var(--cgq-radius);
+  box-shadow: var(--cgq-shadow);
+  width: 100%;
+  max-width: 500px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--cgq-text-main);
+  font-family: var(--cgq-font);
+  font-weight: var(--cgq-font-weight, 300);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.cgq-modal-header {
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--cgq-border);
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.cgq-modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 12.5px;
+}
+
+.cgq-modal-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--cgq-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: var(--cgq-bg-card);
+}
+
+.cgq-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.cgq-btn-secondary {
+  background: var(--cgq-bg);
+  border-color: var(--cgq-border);
+  color: var(--cgq-text-main);
+}
+
+.cgq-btn-secondary:hover {
+  background: var(--cgq-bg-card-hover);
+}
+
+.cgq-btn-primary {
+  background: var(--cgq-primary);
+  color: var(--cgq-bg);
+}
+
+.cgq-btn-primary:hover {
+  background: var(--cgq-primary-hover);
+}
+
+/* Settings Form Controls */
+.cgq-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cgq-form-label {
+  font-weight: 600;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cgq-form-desc {
+  font-size: 11px;
+  color: var(--cgq-text-muted);
+  line-height: 1.4;
+}
+
+.cgq-range-val {
+  font-family: monospace;
+  font-weight: 700;
+  color: var(--cgq-text-main);
+}
+
+.cgq-form-group input[type="range"] {
+  width: 100%;
+  accent-color: var(--cgq-primary);
+  cursor: pointer;
+}
+
+.cgq-form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--cgq-border-subtle);
+}
+
+.cgq-form-row:last-child {
+  border-bottom: none;
+}
+
+.cgq-switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.cgq-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.cgq-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--cgq-border);
+  transition: 0.2s;
+  border-radius: 22px;
+}
+
+.cgq-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+
+input:checked + .cgq-slider {
+  background-color: var(--cgq-primary);
+}
+
+input:checked + .cgq-slider:before {
+  transform: translateX(16px);
+}
+
+/* Toast Notifications */
+#cgq-toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100001;
+  pointer-events: none;
+}
+
+.cgq-toast {
+  background: rgba(15, 23, 42, 0.94);
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  backdrop-filter: blur(4px);
+  animation: cgq-toast-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: auto;
+}
+
+@keyframes cgq-toast-in {
+  from {
+    transform: translateY(12px) scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* キュー表示の影を削除（ChatGPT / Gemini 共通） */
+#cgq-composer-queue-panel,
+#cgq-composer-queue-panel.cgq-collapsed,
+#cgq-composer-queue-panel.cgq-collapsed:hover,
+body > #cgq-composer-queue-panel:not(.cgq-collapsed),
+body > #cgq-composer-queue-panel.cgq-collapsed {
+  box-shadow: none !important;
+}
+
+/* ==========================================================================
+   Rich DIL Components (Cards, Grids, Metrics)
+   ========================================================================== */
+.cgq-dil-grid {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cgq-dil-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-sizing: border-box;
+  background: var(--cgq-card-bg, #ffffff);
+}
+
+.cgq-dil-card.border {
+  border: 1px solid var(--cgq-border, #e5e5e5);
+  gap: 5px;
+}
+
+.cgq-dil-card-icon {
+  display: flex;
+  align-items: center;
+  color: var(--cgq-text-muted, #737373);
+  margin-bottom: 3px;
+}
+
+.cgq-dil-card-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
+}
+
+.cgq-dil-card-title {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--cgq-text-main, #0d0d0d);
+  line-height: 1.35;
+}
+
+.cgq-dil-card-desc {
+  font-size: 12px;
+  color: var(--cgq-text-muted, #737373);
+  line-height: 1.45;
+}
+
+.cgq-dil-card.kpi {
+  background: var(--cgq-card-bg, #f9f9f9);
+  border: 1px solid var(--cgq-border-subtle, #f0f0f0);
+  align-items: center;
+  text-align: center;
+  padding: 12px 8px;
+  gap: 4px;
+}
+
+.cgq-dil-kpi-label {
+  font-size: 11px;
+  color: var(--cgq-text-muted, #737373);
+}
+
+.cgq-dil-kpi-val {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--cgq-text-main, #0d0d0d);
+  line-height: 1.15;
+}
+
+.cgq-dil-badge,
+a.cgq-dil-badge,
+.cgq-source-card,
+a.cgq-source-card {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 5px !important;
+  box-sizing: border-box !important;
+  height: 22px !important;
+  min-width: 0 !important;
+  max-width: min(250px, 100%) !important;
+  padding: 0 8px 0 6px !important;
+  margin: 0 3px !important;
+  border: 1px solid var(--cgq-border-subtle, rgba(0, 0, 0, 0.1)) !important;
+  border-radius: 9999px !important;
+  background: var(--cgq-bg-subtle, #f4f4f5) !important;
+  color: var(--cgq-text-muted, #71717a) !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  line-height: 20px !important;
+  text-decoration: none !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  cursor: pointer !important;
+}
+
+.cgq-dil-badge-fav,
+img.cgq-source-favicon,
+.cgq-source-card img,
+.cgq-dil-badge img,
+.cgq-answer-markdown a img {
+  display: inline-block !important;
+  width: 14px !important;
+  height: 14px !important;
+  min-width: 14px !important;
+  min-height: 14px !important;
+  max-width: 14px !important;
+  max-height: 14px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 3px !important;
+  vertical-align: middle !important;
+  object-fit: contain !important;
+  flex-shrink: 0 !important;
+}
+
+.cgq-dil-badge-label,
+.cgq-source-name {
+  display: inline-block !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+  flex: 0 1 auto !important;
+  line-height: 1.2 !important;
+}
+
+.cgq-dil-badge-extra {
+  display: inline-block !important;
+  color: var(--cgq-text-muted, #a1a1aa) !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  margin-left: 2px !important;
+  flex-shrink: 0 !important;
+}

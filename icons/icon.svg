@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#121214" />
+      <stop offset="100%" stop-color="#242428" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="26" fill="url(#grad)" filter="url(#shadow)" stroke="#3f3f46" stroke-width="1.5"/>
+  <!-- Queue bars -->
+  <rect x="30" y="32" width="68" height="12" rx="6" fill="#ffffff" />
+  <rect x="30" y="52" width="48" height="12" rx="6" fill="#ffffff" />
+  <rect x="30" y="72" width="34" height="12" rx="6" fill="#ffffff" />
+  <!-- Play indicator -->
+  <polygon points="76,60 102,76 76,92" fill="#ffffff" stroke-linejoin="round" />
+</svg>

@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Queue Assistant",
+  "version": "1.1.0",
+  "description": "ChatGPTに人間らしいタイピングと待機時間を備えた疑似キュー機能（複数タブ並行・管理ダッシュボード付き）を追加する拡張機能",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ChatGPT & Gemini Queue Assistant",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net;"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "typography.js",
+        "references.js",
+        "model-picker.js",
+        "composer-tools.js",
+        "content.js"
+      ],
+      "css": [
+        "styles.css",
+        "composer-tools.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
