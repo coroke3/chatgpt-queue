@@ -32,6 +32,13 @@
   --scrollbar-thumb-active: rgba(0, 0, 0, 0.52);
   --scrollbar-track: transparent;
   --bg-elevated: #ffffff;
+  /* Answer rendering measured on chatgpt.com (light): text 16/26, code boxes, table rules, user bubble */
+  --answer-font: -apple-system-body, ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
+  --user-bubble-bg: var(--bg-subtle);
+  --user-bubble-text: var(--text);
+  --code-bg: #f3f3f3;
+  --code-border: rgba(0, 0, 0, 0.05);
+  --table-rule: rgba(0, 0, 0, 0.05);
   --shadow-float: none;
   --ok: #10a37f;
   --warn: #d97706;
@@ -76,6 +83,10 @@ body.dark {
   --scrollbar-thumb-active: rgba(255, 255, 255, 0.55);
   --scrollbar-track: transparent;
   --bg-elevated: #2a2a2a;
+  /* Dark values are estimates (not measured) */
+  --code-bg: #2f2f2f;
+  --code-border: rgba(255, 255, 255, 0.06);
+  --table-rule: rgba(255, 255, 255, 0.1);
   --shadow-float: none;
   --ok: #34d399;
   --warn: #fbbf24;
@@ -552,17 +563,15 @@ button {
 .cgq-chat-answers-area {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 32px;
 }
 
+/* Each site's measured layout, scaled as a whole to the answer text size from settings
+   (--answer-size, default 14px; the parallel view uses 12.5/14 of it; ChatGPT's base is 16px, Gemini's 17px). */
 .cgq-answer-card {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 18px 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  zoom: calc(var(--answer-size, 14) / 16);
 }
 
 /* User Sent Prompt Chat Bubble (Chat-like message design for both ChatGPT & Gemini) */
@@ -571,47 +580,34 @@ button {
   display: flex;
   justify-content: flex-end;
   width: 100%;
-  margin: 4px 0 14px 0;
+  margin-bottom: 20px;
 }
 
 .cgq-user-prompt-bubble {
-  max-width: 82%;
-  background: var(--bg-subtle);
-  color: var(--text);
+  max-width: 70%;
   padding: 10px 16px;
-  border-radius: 18px 18px 4px 18px;
-  font-size: 13.5px;
-  line-height: 1.55;
+  border-radius: 22px;
+  background: var(--user-bubble-bg);
+  color: var(--user-bubble-text);
+  font-family: var(--answer-font);
+  font-size: 16px;
+  line-height: 24px;
   font-weight: 400;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.cgq-user-prompt-row.card-mode {
-  margin: 2px 0 8px 0;
-}
-
-.cgq-user-prompt-bubble.card-mode {
-  max-width: 88%;
-  padding: 6px 11px;
-  border-radius: 13px 13px 3px 13px;
-  font-size: 11.5px;
-  line-height: 1.45;
-}
-
 .cgq-answer-markdown {
-  font-size: 14px;
-  line-height: 1.6;
+  font-family: var(--answer-font);
+  font-size: 16px;
+  line-height: 26px;
+  font-weight: 400;
   color: var(--text);
   word-break: break-word;
 }
 
 .cgq-answer-markdown p {
-  margin-bottom: 10px;
-}
-
-.cgq-answer-markdown p:last-child {
-  margin-bottom: 0;
+  margin: 8px 0 0;
 }
 
 /* ==========================================================================
@@ -620,96 +616,26 @@ button {
 
 /* Single Chat Thread Header */
 
-.cgq-answers-thread-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 0 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.cgq-thread-header-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.cgq-thread-count-badge {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.cgq-thread-toggle-group,
-.cgq-grid-history-toggles {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-subtle);
-}
-
-.cgq-thread-toggle-btn {
-  padding: 2px 10px;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  font-size: 11px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background-color .15s ease,color .15s ease;
-}
-
-.cgq-thread-toggle-btn:hover {
-  color: var(--text);
-}
-
-.cgq-thread-toggle-btn.active {
-  background: var(--bg-card);
-  color: var(--text);
-}
-
 /* Individual Turn Card Header */
-
-.cgq-turn-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 6px;
-  font-size: 11.5px;
-}
-
-.cgq-turn-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.cgq-turn-badge.latest {
-  color: var(--text-secondary);
-}
 
 .cgq-turn-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  margin-top: 8px;
 }
 
 .cgq-turn-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
-  font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background-color .15s ease,color .15s ease;
 }
@@ -725,73 +651,18 @@ button {
 
 /* Grid Mode History Navigation & Accordion */
 
-.cgq-grid-history-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  font-size: 11.5px;
-  color: var(--text-secondary);
-}
-
-.cgq-grid-history-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-secondary);
-}
-
-.cgq-grid-history-btn {
-  padding: 2px 8px;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  font-size: 10.5px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background-color .15s ease,color .15s ease;
-}
-
-.cgq-grid-history-btn:hover {
-  color: var(--text);
-}
-
-.cgq-grid-history-btn.active {
-  background: var(--bg-card);
-  color: var(--text);
-}
-
 .cgq-grid-turn-item {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 12px 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 10px;
+  zoom: calc(var(--answer-size, 14) * 12.5 / 14 / 16);
 }
 
-.cgq-history-expand-banner {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  margin-bottom: 10px;
-  padding: 6px 12px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background-color .15s ease,color .15s ease;
+[data-platform="gemini"] .cgq-answer-card {
+  zoom: calc(var(--answer-size, 14) / 17);
 }
 
-.cgq-history-expand-banner:hover {
-  background: var(--bg-subtle);
-  color: var(--text);
+[data-platform="gemini"] .cgq-grid-turn-item {
+  zoom: calc(var(--answer-size, 14) * 12.5 / 14 / 17);
 }
 
 /* Composer Queued Messages Panel (Directly Above Input) */
@@ -1239,31 +1110,41 @@ button {
 }
 
 .cgq-chat-composer-box {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
   width: 100%;
   max-width: 768px;
-  position: relative;
-  background: var(--bg-elevated);
+  padding: 8px 8px 8px 18px;
   border: 1px solid var(--border);
   border-radius: 26px;
-  padding: 12px 14px 10px 18px;
-  transition: border-color .15s ease;
+  background: var(--bg-elevated);
   box-sizing: border-box;
 }
 
+/* Popovers anchor to the whole box, not to the narrow action group beside the input. */
+
+.cgq-chat-composer-box .cgq-composer-actions {
+  position: static;
+  flex-shrink: 0;
+}
+
 .cgq-chat-textarea {
-  width: 100%;
-  background: transparent !important;
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 160px;
+  padding: 5px 0;
   border: none !important;
   outline: none !important;
-  font-size: 14.5px;
-  line-height: 1.55;
+  background: transparent !important;
   color: var(--text);
   font-family: inherit;
-  font-weight: var(--cgq-font-weight, 300);
+  font-size: 14.5px;
+  font-weight: 300;
+  line-height: 1.55;
   resize: none;
-  min-height: 26px;
-  max-height: 180px;
-  padding: 2px 0 6px 0;
   box-sizing: border-box;
 }
 
@@ -1340,40 +1221,17 @@ button {
   overflow: visible;
 }
 
-/* 1タブ: 100%全幅・全高 */
-
-.cgq-tabs-grid[data-count="1"] {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* 2タブ: 50% 50% 均等2分割 */
-
-.cgq-tabs-grid[data-count="2"] {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-/* 3タブ: 33.3% 33.3% 33.3% 均等3分割 */
-
-.cgq-tabs-grid[data-count="3"] {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-/* 4タブ: 25% 25% 25% 25% 均等4分割 */
-
-.cgq-tabs-grid[data-count="4"] {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-/* 5タブ以上: 均等カラムで横スクロール可能、高さは常に100%フル活用 */
-
-.cgq-tabs-grid[data-count-many="true"] {
+/* Cards share the width equally and never get narrower than the minimum from settings
+   (--card-min-width); with more cards than fit, the row scrolls sideways. */
+.cgq-tabs-grid {
   grid-auto-flow: column;
-  grid-auto-columns: minmax(280px, 1fr);
+  grid-auto-columns: minmax(var(--card-min-width, 280px), 1fr);
 }
 
 /* Grid Card Styling (高さ100%フル活用, 外側余白ゼロ, タブ間のきれいな1px境界線) */
 
 .cgq-tab-card {
+  position: relative;
   background: var(--bg-card);
   border: none;
   border-right: 1px solid var(--border);
@@ -1462,13 +1320,14 @@ button {
   flex: 1;
   overflow-y: auto;
   display: none;
-  padding: 14px;
+  padding: 20px 16px;
   min-height: 0;
 }
 
 .cgq-tab-view.active {
   display: flex;
   flex-direction: column;
+  gap: 32px;
 }
 
 .cgq-tab-card-footer {
@@ -1525,30 +1384,44 @@ button {
 }
 
 .cgq-dash-input-row {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: stretch;
-  background: var(--bg-elevated);
+  align-items: flex-end;
+  gap: 6px;
+  padding: 5px 5px 5px 14px;
   border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 8px 10px 6px 14px;
-  transition: border-color .15s ease;
+  border-radius: 20px;
+  background: var(--bg-elevated);
+}
+
+/* Popovers anchor to the whole input row, not to the narrow action group. */
+
+.cgq-dash-input-row .cgq-composer-actions {
+  position: static;
+  flex-shrink: 0;
 }
 
 .cgq-dash-prompt-input {
-  width: 100%;
-  font-size: 12.5px;
-  font-family: inherit;
-  padding: 4px 0;
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  max-height: 100px;
+  padding: 5px 0;
   border: none;
+  outline: none;
   background: transparent;
   color: var(--text);
-  resize: none;
-  min-height: 24px;
-  max-height: 100px;
+  font-family: inherit;
+  font-size: 12.5px;
   line-height: 1.45;
-  outline: none;
+  resize: none;
+}
+
+.cgq-dash-prompt-input::placeholder,
+.cgq-chat-textarea::placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 620px) {
@@ -1816,46 +1689,70 @@ button {
 /* Markdown Code Blocks */
 
 .cgq-code-block {
-  margin: 10px 0;
-  border-radius: 8px;
+  margin-top: 16px;
   overflow: hidden;
-  background: #1e1e1e;
-  border: 1px solid #333;
+  border: 1px solid var(--code-border);
+  border-radius: 24px;
+  background: var(--code-bg);
 }
 
 .cgq-code-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 6px 12px;
-  background: #2d2d2d;
-  color: #b4b4b4;
-  font-size: 11px;
+  justify-content: space-between;
+  height: 48px;
+  padding: 6px 12px 0 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cgq-code-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cgq-code-copy:hover {
+  background: var(--bg-subtle-hover);
+}
+
+.cgq-code-copy.copied {
+  color: var(--ok);
 }
 
 .cgq-code-copy {
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: none;
-  color: #ececec;
-  font-size: 11px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
   cursor: pointer;
 }
 
 .cgq-code-block pre {
-  padding: 12px;
+  margin: 0;
+  padding: 0 20px 12px;
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: #e5e5e5;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text);
 }
 
-.cgq-inline-code {
+.cgq-inline-code,
+.cgq-answer-markdown :not(pre) > code {
+  padding: .05em .28em;
+  border-radius: .25em;
+  background: var(--code-bg);
   font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: var(--bg-subtle);
+  font-size: .93em;
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -1867,52 +1764,31 @@ button {
 
 .cgq-md-table-wrapper {
   width: 100%;
+  margin-top: 16px;
   overflow-x: auto;
-  margin: 14px 0;
 }
 
 table.cgq-md-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
+  font-size: 14px;
+  line-height: 20px;
 }
 
 table.cgq-md-table th {
-  background: var(--bg-subtle);
-  color: var(--text);
-  padding: 9px 13px;
+  padding: 8px 8px 8px 0;
   font-weight: 600;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-  border-right: 1px solid var(--border-subtle);
+  text-align: start;
+  color: var(--text);
 }
 
-table.cgq-md-table th:last-child {
-  border-right: none;
+table.cgq-md-table tr:not(:last-child) {
+  border-bottom: 1px solid var(--table-rule);
 }
 
 table.cgq-md-table td {
-  padding: 8px 13px;
-  border-bottom: 1px solid var(--border-subtle);
-  border-right: 1px solid var(--border-subtle);
+  padding: 8px 8px 8px 0;
   color: var(--text);
-  line-height: 1.5;
-}
-
-table.cgq-md-table td:last-child {
-  border-right: none;
-}
-
-table.cgq-md-table tr:last-child td {
-  border-bottom: none;
-}
-
-table.cgq-md-table tr:hover {
-  background: var(--bg-subtle);
 }
 
 /* Mermaid Diagrams Container & SVG */
@@ -2369,59 +2245,97 @@ a.cgq-citation-pill:hover,
 /* Rich Markdown Blockquotes */
 
 .cgq-answer-markdown blockquote {
-  margin: 12px 0;
-  padding: 8px 16px;
-  border-left: 2px solid var(--border);
-  border-radius: 0 8px 8px 0;
+  position: relative;
+  margin: 16px 0 0;
+  padding-left: 16px;
   color: var(--text-secondary);
 }
 
 /* Rich Markdown Lists */
 
+/* Quote bar */
+
+.cgq-answer-markdown blockquote::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+/* ChatGPT spacing: first block flush, paragraphs after lists / tables / code / quotes get 16px */
+
+.cgq-answer-markdown > :first-child {
+  margin-top: 0;
+}
+
+.cgq-answer-markdown :is(ul, ol, blockquote, .cgq-code-block, .cgq-md-table-wrapper) + p {
+  margin-top: 16px;
+}
+
+.cgq-answer-markdown li > :is(ul, ol) {
+  margin-top: 0;
+}
+
+.cgq-answer-markdown strong {
+  font-weight: 600;
+}
+
+.cgq-answer-pending {
+  color: var(--text-muted);
+}
+
 .cgq-answer-markdown ul,
 .cgq-answer-markdown ol {
-  margin: 8px 0 8px 22px;
-  line-height: 1.6;
+  margin: 8px 0 0;
+  padding-left: 32px;
 }
 
 .cgq-answer-markdown li {
-  margin-bottom: 4px;
+  padding-left: 4px;
 }
 
 /* Headings */
 
 .cgq-answer-markdown h1 {
-  font-size: 18px;
+  margin: 32px 0 0;
+  font-size: 24px;
+  line-height: 32px;
   font-weight: 600;
-  margin: 16px 0 8px 0;
   color: var(--text);
 }
 
 .cgq-answer-markdown h2 {
-  font-size: 16px;
+  margin: 24px 0 0;
+  font-size: 18px;
+  line-height: 28px;
   font-weight: 600;
-  margin: 14px 0 8px 0;
   color: var(--text);
 }
 
 .cgq-answer-markdown h3 {
-  font-size: 14.5px;
+  margin: 24px 0 0;
+  font-size: 16px;
+  line-height: 26px;
   font-weight: 600;
-  margin: 12px 0 6px 0;
   color: var(--text);
 }
 
 .cgq-answer-markdown h4 {
-  font-size: 13.5px;
+  margin: 16px 0 0;
+  font-size: 16px;
+  line-height: 26px;
   font-weight: 600;
-  margin: 10px 0 4px 0;
   color: var(--text);
 }
 
 .cgq-answer-markdown hr {
+  margin: 24px 0 0;
   border: none;
   border-top: 1px solid var(--border);
-  margin: 16px 0;
 }
 
 /* ==========================================================================
@@ -3184,6 +3098,45 @@ body.sidebar-collapsed #btn-sidebar-open-single {
   border-top: none !important;
 }
 
+/* Single chat: the composer floats over the answers; only its own boxes take clicks. */
+
+#view-single-chat .cgq-chat-composer-container {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+#view-single-chat .cgq-chat-composer-container > * {
+  pointer-events: auto;
+}
+
+/* Parallel cards: the composer floats over the results the same way. */
+
+.cgq-tab-card-footer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.cgq-tab-card-footer > * {
+  pointer-events: auto;
+}
+
+/* Spacer at the end of the answers: the last turn scrolls clear of the floating composer. */
+
+#view-single-chat .cgq-chat-content-wrapper::after,
+.cgq-tab-view[data-view="results"]::after {
+  content: '';
+  flex: none;
+  height: var(--composer-h, 120px);
+}
+
 /* Single view header actions: three identical square buttons with equal icon size */
 
 .cgq-chat-header-actions > button {
@@ -3474,4 +3427,564 @@ body.sidebar-collapsed #view-all-grid-container .cgq-floating-sidebar-open {
   justify-content: flex-end;
   gap: 8px;
   background: var(--bg-card);
+}
+
+/* Older history being fetched from the tab (scrolled to the top) */
+
+.cgq-loading-older::before {
+  content: '過去のログを読み込み中…';
+  display: block;
+  flex: none;
+  padding: 8px 0;
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* Choice widget from an answer (radio options + submit), mirrored from ChatGPT */
+
+.cgq-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.cgq-choice-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.cgq-choice-option:hover {
+  background: var(--bg-subtle);
+}
+
+.cgq-choice-option input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--text);
+}
+
+.cgq-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cgq-choice-label {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cgq-choice-desc {
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+
+.cgq-choice-submit {
+  margin-top: 6px;
+  border-radius: var(--radius-pill);
+}
+
+.cgq-choice-submit:disabled,
+.cgq-choice-option:has(input:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ==========================================================================
+   Gemini answers, measured on gemini.google.com (light). Dark values are estimates.
+   ChatGPT measurements are the defaults above.
+   ========================================================================== */
+
+[data-platform="gemini"] {
+  --answer-font: "Google Sans Flex", "Google Sans", "Helvetica Neue", sans-serif;
+  --code-bg: #141414;
+  --inline-code-bg: #f2f0f0;
+}
+
+body.dark [data-platform="gemini"] {
+  --code-bg: #1b1c1d;
+  --inline-code-bg: #333537;
+}
+
+[data-platform="gemini"] .cgq-user-prompt-bubble {
+  max-width: 452px;
+  padding: 20px 28px;
+  border-radius: 40px;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown {
+  font-size: 17px;
+  line-height: 26px;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown p,
+[data-platform="gemini"] .cgq-answer-markdown :is(ul, ol, blockquote) {
+  margin-top: 16px;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown h2 {
+  font-size: 24px;
+  line-height: 34px;
+  font-weight: 400;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown h3 {
+  margin-top: 40px;
+  font-size: 20px;
+  line-height: 29px;
+  font-weight: 500;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown :is(ul, ol) {
+  padding-left: 24px;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown li {
+  padding-left: 16px;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown :is(strong, b) {
+  font-weight: 700;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown :not(pre) > code {
+  padding: 4px 6px;
+  border-radius: 9999px;
+  background: var(--inline-code-bg);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+[data-platform="gemini"] .cgq-answer-markdown blockquote {
+  padding-left: 32px;
+  color: var(--text);
+  font-style: italic;
+}
+
+[data-platform="gemini"] .cgq-answer-markdown blockquote::before {
+  content: none;
+}
+
+/* Tables: no row rules, only a line under each header cell */
+
+[data-platform="gemini"] table.cgq-md-table {
+  width: calc(100% + 48px);
+  margin: 0 -24px;
+  border-collapse: separate;
+  border-spacing: 24px 0;
+  font-size: 17px;
+  line-height: 26px;
+}
+
+[data-platform="gemini"] table.cgq-md-table tr:not(:last-child) {
+  border-bottom: none;
+}
+
+[data-platform="gemini"] table.cgq-md-table th {
+  padding: 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 400;
+}
+
+[data-platform="gemini"] table.cgq-md-table td {
+  padding: 16px 0 0;
+}
+
+/* Code: black box with a 40px radius and white text, in both themes */
+
+[data-platform="gemini"] .cgq-code-block {
+  border: none;
+  border-radius: 40px;
+}
+
+[data-platform="gemini"] .cgq-code-header {
+  height: auto;
+  padding: 26px 26px 0 32px;
+  font-size: 15px;
+  font-weight: 500;
+  color: #fff;
+}
+
+[data-platform="gemini"] .cgq-code-lang svg {
+  display: none;
+}
+
+[data-platform="gemini"] .cgq-code-copy {
+  color: #fff;
+}
+
+[data-platform="gemini"] .cgq-code-copy:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+[data-platform="gemini"] .cgq-code-block pre {
+  padding: 16px 32px 26px;
+  font-family: "Google Sans Code", var(--font-mono);
+  font-size: 14px;
+  line-height: 21px;
+  color: #fff;
+}
+
+/* One picker for model + thinking level: "GPT-5 · 高"; the effort part disappears when empty */
+.cgq-pill-sub {
+  color: var(--text-muted);
+}
+
+.cgq-pill-sub::before {
+  content: '· ';
+}
+
+.cgq-pill-sub:empty {
+  display: none;
+}
+
+.cgq-popover-section {
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Model + thinking level menu, compact like ChatGPT's: names and a check only */
+.cgq-chatgpt-popover {
+  min-width: 240px;
+  max-width: 300px;
+}
+
+.cgq-chatgpt-popover .cgq-popover-item {
+  padding: 7px 10px;
+}
+
+.cgq-chatgpt-popover :is(.cgq-popover-item-icon, .cgq-popover-item-desc) {
+  display: none;
+}
+
+.cgq-chatgpt-popover .cgq-popover-item-title {
+  font-weight: 400;
+}
+
+/* Thinking level: the level's name above a track with one stop per level.
+   Flat (no shadows); motion follows ChatGPT's measured timings: the thumb settles
+   in ~0.45s on an expo-out curve, ticks fade in 0.2-0.3s, the label slides 6px. */
+.cgq-effort-slider {
+  --d: 24px;
+  --settle: 0.45s cubic-bezier(0.19, 1, 0.22, 1);
+  padding: 2px 8px 0;
+}
+
+.cgq-effort-value {
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cgq-effort-value span {
+  display: inline-block;
+}
+
+.cgq-effort-track {
+  position: relative;
+  height: var(--d);
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  transition: background-color 0.2s ease;
+}
+
+.cgq-effort-track:hover {
+  background: var(--bg-subtle-hover);
+}
+
+.cgq-effort-track:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.cgq-effort-fill,
+.cgq-effort-thumb-rail {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: transform var(--settle);
+}
+
+.cgq-effort-fill {
+  border-radius: 999px;
+  background: var(--btn-primary-bg);
+  transform: translateX(calc((var(--pos, 0) - 1) * (100% - var(--d))));
+}
+
+.cgq-effort-thumb-rail {
+  transform: translateX(calc(var(--pos, 0) * (100% - var(--d))));
+}
+
+.cgq-effort-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--d) - 4px);
+  height: calc(var(--d) - 4px);
+  border-radius: 50%;
+  background: var(--btn-primary-text);
+  transition: transform 0.12s ease;
+}
+
+.cgq-effort-slider.is-pressed .cgq-effort-thumb {
+  transform: scale(1.1);
+}
+
+.cgq-effort-slider.is-instant :is(.cgq-effort-fill, .cgq-effort-thumb-rail) {
+  transition: none;
+}
+
+.cgq-effort-tick {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--d) / 2 + var(--at) * (100% - var(--d)));
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text) 25%, transparent);
+  pointer-events: none;
+  transition: background-color 0.3s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.2s ease-in-out, transform 0.12s ease;
+}
+
+.cgq-effort-tick.is-covered {
+  background: color-mix(in srgb, var(--btn-primary-text) 45%, transparent);
+}
+
+.cgq-effort-tick.is-hidden {
+  opacity: 0;
+  transform: scale(0);
+}
+
+.cgq-effort-track input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  appearance: none;
+  cursor: pointer;
+}
+
+/* Same thumb width as the visual one, so pointer positions map 1:1 */
+.cgq-effort-track input[type="range"]::-webkit-slider-thumb {
+  width: var(--d);
+  height: var(--d);
+  appearance: none;
+}
+
+.cgq-effort-stops {
+  position: relative;
+  height: 14px;
+  margin-top: 6px;
+  font-size: 10.5px;
+  line-height: 14px;
+  color: var(--text-muted);
+}
+
+/* Each name sits under its tick */
+.cgq-effort-stops span {
+  position: absolute;
+  left: calc(var(--d) / 2 + var(--at) * (100% - var(--d)));
+  transform: translateX(-50%);
+  white-space: nowrap;
+  transition: color 0.2s ease;
+}
+
+.cgq-effort-stops span:first-child {
+  left: 0;
+  transform: none;
+}
+
+.cgq-effort-stops span:last-child:not(:first-child) {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+.cgq-effort-stops span.is-active {
+  color: var(--text);
+}
+
+/* Icon-only pill (bulk add) */
+.cgq-chatgpt-pill-btn.cgq-icon-only {
+  padding: 4px;
+}
+
+/* ChatGPT's activity block: shimmering label while it works, a chevron that opens the log.
+   Timings follow chatgpt.com (measured 2026-10): the highlight sweeps a ~48px label in about 1s,
+   then rests; the log opens with a height transition. */
+.cgq-activity {
+  margin: 0 0 12px;
+  font-size: 16px; /* ChatGPT's own size; the turn is scaled as a whole */
+  line-height: 24px;
+}
+
+.cgq-activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cgq-activity-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.cgq-activity-header:hover {
+  color: var(--text);
+}
+
+.cgq-activity-chevron {
+  flex: none;
+  transition: transform 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+  transform: rotate(-90deg);
+}
+
+.cgq-activity.is-open .cgq-activity-chevron {
+  transform: rotate(0deg);
+}
+
+.cgq-activity-label.is-changed {
+  animation: cgq-activity-label-in 0.32s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+@keyframes cgq-activity-label-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The sweep: muted text with a brighter band passing over it, then a pause */
+.cgq-activity.is-active .cgq-activity-label {
+  background: linear-gradient(90deg, var(--text-muted) 0%, var(--text-muted) 35%, var(--text) 50%, var(--text-muted) 65%, var(--text-muted) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cgq-activity-sweep 2.6s linear infinite;
+}
+
+@keyframes cgq-activity-sweep {
+  0% { background-position: 100% 0; }
+  40%, 100% { background-position: 0 0; }
+}
+
+.cgq-activity-skip {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+  cursor: pointer;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.cgq-activity-skip:hover {
+  color: var(--text);
+}
+
+.cgq-activity-skip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cgq-activity-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.32s cubic-bezier(0.19, 1, 0.22, 1), opacity 0.2s ease;
+}
+
+.cgq-activity.is-open .cgq-activity-body {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.cgq-activity-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cgq-activity-step {
+  margin-top: 8px;
+  color: var(--text-muted);
+}
+
+.cgq-activity-note {
+  margin-top: 4px;
+}
+
+:is(.cgq-activity-step, .cgq-activity-note).is-new {
+  animation: cgq-activity-line-in 0.36s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes cgq-activity-line-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Waiting for the first token: ChatGPT's pulsing dot */
+.cgq-busy-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin: 6px 0;
+  border-radius: 50%;
+  background: var(--text);
+  animation: cgq-busy-pulse 1.2s ease-in-out infinite;
+}
+
+[data-platform="chatgpt"] .cgq-busy-dot,
+.cgq-busy-dot:not([data-platform="gemini"] *) {
+  background: #3b82f6;
+}
+
+@keyframes cgq-busy-pulse {
+  0%, 100% { transform: scale(0.75); opacity: 0.7; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+.cgq-thinking-notice {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  animation: cgq-activity-line-in 0.36s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Every control eases between states (zero specificity, so any explicit transition above wins) */
+:where(button, a, input, select, textarea, [role="button"], [role="menuitem"], [role="option"], .cgq-popover-item) {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
 }

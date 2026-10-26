@@ -241,46 +241,29 @@
           </div>
 
           <div class="cgq-chat-composer-box">
-            <textarea class="cgq-chat-textarea" id="single-chat-input" placeholder="このチャットのキューに追加するプロンプトを入力 (Enterでキューに追加, Shift+Enterで改行)..." rows="1"></textarea>
+            <textarea class="cgq-chat-textarea" id="single-chat-input" placeholder="キューに追加（Enter で追加・Shift+Enter で改行）" rows="1"></textarea>
             <div class="cgq-composer-actions">
               <!-- Model & Effort Selector Controls (ChatGPT Style Dropdown UI) -->
               <div class="cgq-composer-toolbar">
-                <!-- ChatGPT-style Model Pill Dropdown -->
+                <!-- One picker for the model and its thinking level (effort) -->
                 <div class="cgq-dropdown-wrapper" id="single-model-wrapper">
-                  <button type="button" class="cgq-chatgpt-pill-btn" id="single-model-pill-btn" aria-haspopup="menu" aria-expanded="false" title="モデルを選択">
+                  <button type="button" class="cgq-chatgpt-pill-btn" id="single-model-pill-btn" aria-haspopup="menu" aria-expanded="false" title="モデルと思考レベルを選択">
                     <span class="cgq-pill-icon-box" id="single-model-pill-icon">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z"></path></svg>
                     </span>
                     <span class="cgq-pill-label" id="single-model-pill-label">Auto</span>
+                    <span class="cgq-pill-label cgq-pill-sub" id="single-effort-pill-label"></span>
                     <svg class="cgq-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                       <polyline points="6 9 12 15 18 9"></polyline>
                     </svg>
                   </button>
                   <div class="cgq-chatgpt-popover" id="single-model-popover" style="display: none;">
-                    <div class="cgq-popover-header">モデルを選択</div>
-                    <div class="cgq-popover-list" id="single-model-popover-list">
-                      <!-- Dynamically populated from tab -->
+                    <div class="cgq-popover-section" id="single-effort-wrapper" style="display: none;">
+                      <div class="cgq-popover-header">思考レベル</div>
+                      <div id="single-effort-popover-list"></div>
                     </div>
-                  </div>
-                </div>
-
-                <!-- ChatGPT-style Reasoning Effort Pill Dropdown (visible when model supports reasoning) -->
-                <div class="cgq-dropdown-wrapper" id="single-effort-wrapper" style="display: none;">
-                  <button type="button" class="cgq-chatgpt-pill-btn effort" id="single-effort-pill-btn" aria-haspopup="menu" aria-expanded="false" title="思考レベル (推論エフォート) を選択">
-                    <span class="cgq-pill-icon-box">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                        <circle cx="12" cy="12" r="9"></circle>
-                        <path d="M12 7v5l3 3"></path>
-                      </svg>
-                    </span>
-                    <span class="cgq-pill-label" id="single-effort-pill-label">Auto</span>
-                    <svg class="cgq-pill-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                      <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                  </button>
-                  <div class="cgq-chatgpt-popover" id="single-effort-popover" style="display: none;">
-                    <div class="cgq-popover-header">思考レベル / 思考の深さ</div>
-                    <div class="cgq-popover-list" id="single-effort-popover-list">
+                    <div class="cgq-popover-header">モデル</div>
+                    <div class="cgq-popover-list" id="single-model-popover-list">
                       <!-- Dynamically populated from tab -->
                     </div>
                   </div>
@@ -291,7 +274,7 @@
                 <select id="single-effort-select" style="display: none;"></select>
 
                 <!-- Bulk Add Button (1 prompt per line) -->
-                <button type="button" class="cgq-chatgpt-pill-btn" id="single-btn-bulk-add" title="プロンプトを一括追加 (1行1プロンプト)">
+                <button type="button" class="cgq-chatgpt-pill-btn cgq-icon-only" id="single-btn-bulk-add" title="プロンプトを一括追加 (1行1プロンプト)" aria-label="プロンプトを一括追加">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <line x1="8" y1="6" x2="21" y2="6"></line>
                     <line x1="8" y1="12" x2="21" y2="12"></line>
@@ -300,7 +283,6 @@
                     <line x1="3" y1="12" x2="3.01" y2="12"></line>
                     <line x1="3" y1="18" x2="3.01" y2="18"></line>
                   </svg>
-                  <span class="cgq-pill-label">一括追加</span>
                 </button>
               </div>
               <button class="cgq-composer-send-btn" id="single-btn-send" title="キューに追加 (Enter)">
@@ -654,6 +636,28 @@
                       <option value="all">すべての履歴を表示</option>
                       <option value="latest">最新のターンのみ表示</option>
                     </select>
+                  </div>
+                </div>
+
+                <!-- answerFontSize -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">回答の文字サイズ</span>
+                    <span class="cgq-settings-desc">単一チャットの回答の文字サイズ (<span id="setting-val-answer-size">14</span> px)。並列表示も同じ比率で変わります</span>
+                  </div>
+                  <div class="cgq-settings-control range-control">
+                    <input type="range" class="cgq-settings-range" id="setting-answer-size" min="11" max="20" step="0.5" value="14">
+                  </div>
+                </div>
+
+                <!-- cardMinWidth -->
+                <div class="cgq-settings-row">
+                  <div class="cgq-settings-info">
+                    <span class="cgq-settings-label">並列表示の最小幅</span>
+                    <span class="cgq-settings-desc">並列表示で1タブあたりこの幅より狭くしません (<span id="setting-val-card-min">280</span> px)。収まらない分は横にスクロールします</span>
+                  </div>
+                  <div class="cgq-settings-control range-control">
+                    <input type="range" class="cgq-settings-range" id="setting-card-min-width" min="200" max="800" step="20" value="280">
                   </div>
                 </div>
               </div>

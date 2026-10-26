@@ -425,12 +425,11 @@ test('Queue Manager displays all ChatGPT multi-turn conversation history in Sing
   const singleAnswersArea = f.doc.getElementById('single-answers-area');
   assert.ok(singleAnswersArea);
 
-  const threadCountBadge = singleAnswersArea.querySelector('.cgq-thread-count-badge');
-  assert.ok(threadCountBadge, 'Thread count badge must exist in Single Chat View');
-  assert.ok(threadCountBadge.textContent.includes('全 3 件'));
+  // Laid out like ChatGPT: no thread header, history toggles or turn badges, just the turns.
+  assert.equal(singleAnswersArea.querySelector('.cgq-thread-count-badge, .cgq-thread-toggle-btn, .cgq-turn-badge'), null);
 
   const singleCards = singleAnswersArea.querySelectorAll('.cgq-answer-card');
-  assert.equal(singleCards.length, 3, 'Single Chat View must render all 3 conversation turns in "all" mode');
+  assert.equal(singleCards.length, 3, 'Single Chat View must render all 3 conversation turns');
 
   assert.ok(singleCards[0].textContent.includes('第1問：日本の首都は？'));
   assert.ok(singleCards[0].textContent.includes('日本の首都は東京です。'));
@@ -438,39 +437,15 @@ test('Queue Manager displays all ChatGPT multi-turn conversation history in Sing
   assert.ok(singleCards[1].textContent.includes('東京都の人口は約1400万人です。'));
   assert.ok(singleCards[2].textContent.includes('第3問：有名な観光地は？'));
   assert.ok(singleCards[2].textContent.includes('浅草寺や東京タワー'));
+  assert.ok(singleCards[2].querySelector('.btn-copy-turn'), 'each answer keeps a copy action under it');
 
-  // Test toggling to "最新のみ"
-  const latestBtn = singleAnswersArea.querySelector('.cgq-thread-toggle-btn[data-history-mode="latest"]');
-  assert.ok(latestBtn);
-  latestBtn.click();
-  await tick();
-
-  const latestCards = singleAnswersArea.querySelectorAll('.cgq-answer-card');
-  assert.equal(latestCards.length, 1, 'In "latest" mode, only the newest turn should be displayed');
-  assert.ok(latestCards[0].textContent.includes('第3問：有名な観光地は？'));
-
-  // Toggle back to "すべての履歴"
-  const allBtn = singleAnswersArea.querySelector('.cgq-thread-toggle-btn[data-history-mode="all"]');
-  assert.ok(allBtn);
-  allBtn.click();
-  await tick();
-  assert.equal(singleAnswersArea.querySelectorAll('.cgq-answer-card').length, 3);
-
-  // 2. Parallel Grid View: Verify history bar, banner expand and full history view
+  // 2. Parallel Grid View: every turn is shown in order, with no history bar or expand banner
   f.doc.getElementById('nav-all-grid').click();
   await tick();
 
   const gridCard = f.doc.querySelector('.cgq-tab-card');
   assert.ok(gridCard, 'Grid card must exist');
-
-  // Initially in grid view, past turns are collapsed
-  const expandBanner = gridCard.querySelector('.cgq-history-expand-banner');
-  assert.ok(expandBanner, 'Expand past turns banner must be displayed when multiple turns exist');
-  assert.ok(expandBanner.textContent.includes('過去のやり取り (2件) を展開'));
-
-  // Click expand banner to view full history in Grid View
-  expandBanner.click();
-  await tick();
+  assert.equal(gridCard.querySelector('.cgq-history-expand-banner, .cgq-grid-history-bar'), null);
 
   const gridTurnItems = gridCard.querySelectorAll('.cgq-grid-turn-item');
   assert.equal(gridTurnItems.length, 3, 'Grid card must render all 3 turns when expanded');

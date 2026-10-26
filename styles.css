@@ -483,22 +483,21 @@ body > #cgq-composer-queue-panel.cgq-collapsed {
 
 .cgq-injected-btn {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  background: var(--cgq-bg-card);
-  color: var(--cgq-text-main);
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  margin-right: 4px;
+  padding: 0;
   border: 1px solid var(--cgq-border);
   border-radius: 9999px;
-  padding: 6px 13px;
-  font-size: 12.5px;
-  font-weight: 500;
+  background: var(--cgq-bg-card);
+  color: var(--cgq-text-main);
   cursor: pointer;
-  margin-right: 6px;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-  height: 32px;
-  box-sizing: border-box;
   user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .cgq-injected-btn:hover {
@@ -507,8 +506,8 @@ body > #cgq-composer-queue-panel.cgq-collapsed {
 }
 
 .cgq-injected-btn svg {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
   color: var(--cgq-text-main);
 }
 
@@ -892,4 +891,10 @@ img.cgq-source-favicon,
   font-weight: 600 !important;
   margin-left: 2px !important;
   flex-shrink: 0 !important;
+}
+
+/* Every control of the in-page panel eases between states (zero specificity) */
+:where([id^="cgq-"], [class^="cgq-"]) :where(button, a, input, textarea),
+:where(.cgq-injected-btn) {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
 }

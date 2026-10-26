@@ -67,11 +67,17 @@ test('Gemini initializes with a visible empty panel and Queue button before a na
   assert.equal(f.doc.getElementById('cgq-panel-badge').textContent, '0件');
   const registered = Object.values(f.store.cgq_tabs_registry || {});
   assert.equal(registered.length, 1, 'Gemini must report metadata without silently swallowing an error');
-  assert.equal(registered[0].effort, null);
-  assert.equal(registered[0].supportsEffort, false);
-  assert.equal(registered[0].availableEfforts.length, 0);
+  assert.equal(registered[0].effort, 'auto', 'Gemini offers its thinking level (思考レベル) from the mode picker');
+  assert.equal(registered[0].supportsEffort, true);
+  assert.equal(registered[0].availableEfforts.length, 4, 'Auto plus the Gemini levels 低 / 標準 / 高');
   button.click();
-  assert.ok(f.doc.getElementById('cgq-bulk-textarea'), 'empty-input entry opens the prompt dialog');
+  assert.equal(f.doc.getElementById('cgq-bulk-textarea'), null, '"+" only queues the composer text; empty shows a notice');
+  const bulk = f.doc.getElementById('cgq-injected-bulk-btn');
+  assert.ok(bulk, 'an icon-only bulk button sits next to "+"');
+  assert.equal(bulk.previousElementSibling, button);
+  assert.equal(button.textContent.trim(), '', '"+" is icon only');
+  bulk.click();
+  assert.ok(f.doc.getElementById('cgq-bulk-textarea'), 'the bulk button opens the bulk panel');
   f.doc.getElementById('cgq-modal-cancel').click();
   f.doc.getElementById('cgq-btn-dashboard').click();
   assert.ok(f.messages.some(message => message.action === 'OPEN_DASHBOARD'));
@@ -142,7 +148,7 @@ test('Gemini responds to Queue Manager discovery even with an empty queue', asyn
   assert.equal(response.state.chromeTabId, 73);
   assert.equal(response.state.url, 'https://gemini.google.com/app');
   assert.equal(response.state.items.length, 0);
-  assert.equal(response.state.effort, null);
+  assert.equal(response.state.effort, 'auto', 'Gemini offers its thinking level (思考レベル) from the mode picker');
   assert.ok(response.state.tabId);
 });
 
@@ -286,4 +292,43 @@ test('Gemini multi-turn conversation extraction pairs prompts and answers correc
   const latest = f.window.__CGQ_DOM__.getLatestAnswer();
   assert.equal(latest.userPrompt, '建築学科についてしらべて');
   assert.ok(latest.text.includes('建築学科は100年以上の歴史を持つ看板学科です。'));
+});
+
+test('Gemini thinking level is switched through the mode menu by exact label, never the "高度な推論" model', async t => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM(`<!doctype html><body>
+    <button data-test-id="bard-mode-menu-button" aria-label="モード選択ツールを開く（現在のモデル: Flash）">Flash</button>
+    <div class="cdk-overlay-container"></div></body>`, { url: 'https://gemini.google.com/app', runScripts: 'outside-only', pretendToBeVisual: true });
+  const { window } = dom;
+  t.after(() => window.close());
+  const overlay = window.document.querySelector('.cdk-overlay-container');
+  const clicked = [];
+  // Real structure (2026-10): models, then a 思考レベル item that opens a submenu with 低 / 標準 / 高.
+  window.document.querySelector('[data-test-id="bard-mode-menu-button"]').addEventListener('click', () => {
+    overlay.innerHTML = `<gem-menu role="menu">
+      <gem-menu-item role="menuitem"><span class="label">3.1 Pro</span><span>高度な推論</span></gem-menu-item>
+      <gem-menu-item role="menuitem" aria-haspopup="true" class="thinking"><span class="label">思考レベル</span></gem-menu-item></gem-menu>`;
+    overlay.querySelector('.thinking').addEventListener('click', () => {
+      overlay.insertAdjacentHTML('beforeend', `<div class="submenu-container"><gem-menu role="menu">
+        <gem-menu-item role="menuitem" class="selected"><div><span class="label">低</span></div></gem-menu-item>
+        <gem-menu-item role="menuitem"><div><span class="label">標準</span></div></gem-menu-item>
+        <gem-menu-item role="menuitem"><div><span class="label">高</span></div></gem-menu-item></gem-menu></div>`);
+      overlay.querySelectorAll('.submenu-container [role="menuitem"]').forEach(item => item.addEventListener('click', () => {
+        clicked.push(item.textContent.trim());
+        overlay.querySelectorAll('.submenu-container .selected').forEach(other => other.classList.remove('selected'));
+        item.classList.add('selected'); // Gemini moves the check to the chosen level
+      }));
+    });
+    overlay.querySelector('[role="menuitem"]').addEventListener('click', () => clicked.push('3.1 Pro'));
+  });
+  for (const file of ['references.js', 'model-picker.js', 'composer-tools.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
+  window.eval(fs.readFileSync(path.join(root, 'content.js'), 'utf8')
+    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async () => {};')
+    .replace('  const queueManager = new QueueManager();', '  globalThis.__queueTest = { DOM }; return;\n  const queueManager = new QueueManager();'));
+  const { DOM } = window.__queueTest;
+  assert.equal(await DOM.switchReasoningEffort('high'), true);
+  assert.deepEqual([...clicked], ['高'], 'only the 高 thinking level is clicked');
+  const info = DOM.getCurrentModelInfo();
+  assert.equal(info.effort, 'high');
+  assert.equal(info.effortLabel, '高');
 });

@@ -86,6 +86,9 @@
   const STORAGE_KEY_REGISTRY = 'cgq_tabs_registry';
   const STORAGE_KEY_SETTINGS = 'cgq_user_settings';
   const STORAGE_KEY_UI_STATE = 'cgq_ui_state';
+  const SESSION_KEY_TIMEOUT = 'cgq_delivery_timeout_reload';
+  const SESSION_KEY_STALL = 'cgq_stalled_send';
+  const STALL_MS = 60 * 60 * 1000; // no answer progress this long -> continue in a new chat
   const SESSION_KEY_CHAT_ROLLOVER = 'cgq_chat_rollover';
 
   const DEFAULT_SETTINGS = {
@@ -170,6 +173,15 @@
     '#prompt-textarea', '#cgq-widget', '#cgq-composer-queue-panel'
   ].join(', ');
   // Progress bar that eases in, fills to 100% when its work ends, then fades out (see .is-visible in styles.css).
+  // ChatGPT can keep a hidden copy of a thread (and its composer) mounted after in-app navigation,
+  // e.g. /c/<id> -> /g/<project>/c/<id>. Page lookups only consider what is actually rendered.
+  // (jsdom has no checkVisibility, so everything counts as shown there.)
+  const isShown = el => !!el && (typeof el.checkVisibility !== 'function' || el.checkVisibility());
+  const $v = selector => {
+    for (const el of document.querySelectorAll(selector)) if (isShown(el)) return el;
+    return null;
+  };
+  const $$v = selector => Array.from(document.querySelectorAll(selector)).filter(isShown);
   const setProgress = (track, fill, visible, percent) => {
     if (!track || !fill) return;
     if (visible && !track.classList.contains('is-visible')) {
@@ -182,6 +194,27 @@
     fill.style.width = `${visible ? Math.max(0, Math.min(100, percent || 0)) : 100}%`;
   };
   const DRAFT_IDLE_MS = 3000; // a user draft unchanged this long is sent before the next queued item
+  // The same turn can be read twice with small differences (another root element, whitespace, sources
+  // added after it finished). Compare by the prompt, or by the start of the answer when a prompt is missing.
+  const turnText = value => String(value || '').replace(/[\s*_`#>|\-]+/g, ' ').trim();
+  const sameTurn = (a, b) => {
+    const pa = turnText(a?.prompt), pb = turnText(b?.prompt);
+    if (pa && pb) return pa === pb && (!a.answer || !b.answer || turnText(a.answer).slice(0, 120) === turnText(b.answer).slice(0, 120) ||
+      turnText(a.answer).startsWith(turnText(b.answer).slice(0, 60)) || turnText(b.answer).startsWith(turnText(a.answer).slice(0, 60)));
+    const aa = turnText(a?.answer).slice(0, 120), ab = turnText(b?.answer).slice(0, 120);
+    return !!aa && aa === ab;
+  };
+  // Collapse a turn repeated back to back (keep the later, fuller reading).
+  const dropRepeatedTurns = list => list.reduce((out, qa) => {
+    const prev = out[out.length - 1];
+    if (prev && sameTurn(prev, qa)) out[out.length - 1] = { ...prev, ...qa, prompt: qa.prompt || prev.prompt, answer: qa.answer || prev.answer };
+    else out.push(qa);
+    return out;
+  }, []);
+  // Gemini's thinking levels (in its model menu: 思考レベル), keyed by the queue's effort ids.
+  const GEMINI_MODE_PICKER = '[data-test-id="bard-mode-menu-button"]';
+  const GEMINI_THINKING_LABELS = { low: ['低', 'Low'], medium: ['標準', 'Standard', 'Medium'], high: ['高', 'High'] };
+  let geminiThinkingCache = null;
   const normalizeDraft = value => String(value || '').replace(/\s+/g, ' ').trim();
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -240,49 +273,49 @@
     getPromptInput() {
       if (IS_GEMINI) {
         return (
-          document.querySelector('rich-textarea [contenteditable="true"]') ||
-          document.querySelector('.ql-editor[contenteditable="true"]') ||
-          document.querySelector('div[contenteditable="true"][aria-label*="prompt" i]') ||
-          document.querySelector('div[contenteditable="true"][aria-label*="プロンプト" i]') ||
-          document.querySelector('div[contenteditable="true"][role="textbox"]') ||
-          document.querySelector('rich-textarea') ||
-          document.querySelector('textarea')
+          $v('rich-textarea [contenteditable="true"]') ||
+          $v('.ql-editor[contenteditable="true"]') ||
+          $v('div[contenteditable="true"][aria-label*="prompt" i]') ||
+          $v('div[contenteditable="true"][aria-label*="プロンプト" i]') ||
+          $v('div[contenteditable="true"][role="textbox"]') ||
+          $v('rich-textarea') ||
+          $v('textarea')
         );
       }
       return (
-        document.querySelector('#prompt-textarea') ||
-        document.querySelector('div[contenteditable="true"][role="textbox"]') ||
-        document.querySelector('textarea[data-id="root"]') ||
-        document.querySelector('form textarea')
+        $v('#prompt-textarea') ||
+        $v('div[contenteditable="true"][role="textbox"]') ||
+        $v('textarea[data-id="root"]') ||
+        $v('form textarea')
       );
     },
 
     getSendButton() {
       if (IS_GEMINI) {
         return (
-          document.querySelector('button[aria-label*="Send message" i]') ||
-          document.querySelector('button[aria-label*="Send prompt" i]') ||
-          document.querySelector('button[aria-label*="プロンプトを送信" i]') ||
-          document.querySelector('button[aria-label*="メッセージを送信" i]') ||
-          document.querySelector('button[aria-label*="送信" i]') ||
-          document.querySelector('button.send-button') ||
-          document.querySelector('button[mattooltip*="Send" i]') ||
-          document.querySelector('button[mattooltip*="送信" i]') ||
-          document.querySelector('button[aria-label*="Send" i]')
+          $v('button[aria-label*="Send message" i]') ||
+          $v('button[aria-label*="Send prompt" i]') ||
+          $v('button[aria-label*="プロンプトを送信" i]') ||
+          $v('button[aria-label*="メッセージを送信" i]') ||
+          $v('button[aria-label*="送信" i]') ||
+          $v('button.send-button') ||
+          $v('button[mattooltip*="Send" i]') ||
+          $v('button[mattooltip*="送信" i]') ||
+          $v('button[aria-label*="Send" i]')
         );
       }
       return (
-        document.querySelector('button[data-testid="send-button"]') ||
-        document.querySelector('button[data-testid="fruitjuice-send-button"]') ||
-        document.querySelector('button[data-testid*="send" i]') ||
-        document.querySelector('#composer-submit-button button') ||
-        document.querySelector('#composer-submit-button') ||
-        document.querySelector('button[aria-label*="Send prompt" i]') ||
-        document.querySelector('button[aria-label*="プロンプトを送信" i]') ||
-        document.querySelector('button[aria-label*="メッセージを送信" i]') ||
-        document.querySelector('button[aria-label*="Send" i]') ||
-        document.querySelector('button[aria-label*="送信" i]') ||
-        document.querySelector('form button[type="submit"]')
+        $v('button[data-testid="send-button"]') ||
+        $v('button[data-testid="fruitjuice-send-button"]') ||
+        $v('button[data-testid*="send" i]') ||
+        $v('#composer-submit-button button') ||
+        $v('#composer-submit-button') ||
+        $v('button[aria-label*="Send prompt" i]') ||
+        $v('button[aria-label*="プロンプトを送信" i]') ||
+        $v('button[aria-label*="メッセージを送信" i]') ||
+        $v('button[aria-label*="Send" i]') ||
+        $v('button[aria-label*="送信" i]') ||
+        $v('form button[type="submit"]')
       );
     },
 
@@ -303,7 +336,7 @@
       // anchor after the composer's last visible button so the Queue entry point never disappears.
       const form = input?.closest('form, input-container, input-area');
       const buttons = Array.from(form?.querySelectorAll('button') || [])
-        .filter(b => b.id !== 'cgq-injected-btn' && b.offsetParent !== null && b.parentElement);
+        .filter(b => !b.id.startsWith('cgq-injected') && b.offsetParent !== null && b.parentElement);
       const last = buttons[buttons.length - 1];
       return last ? { parent: last.parentElement, before: last.nextElementSibling } : null;
     },
@@ -311,29 +344,29 @@
     isGenerating() {
       if (IS_GEMINI) {
         const stopBtn = (
-          document.querySelector('button[aria-label*="Stop response" i]') ||
-          document.querySelector('button[aria-label*="Stop" i]') ||
-          document.querySelector('button[aria-label*="停止" i]') ||
-          document.querySelector('button[aria-label*="中断" i]') ||
-          document.querySelector('button.stop-button') ||
-          document.querySelector('[aria-busy="true"] button')
+          $v('button[aria-label*="Stop response" i]') ||
+          $v('button[aria-label*="Stop" i]') ||
+          $v('button[aria-label*="停止" i]') ||
+          $v('button[aria-label*="中断" i]') ||
+          $v('button.stop-button') ||
+          $v('[aria-busy="true"] button')
         );
         if (stopBtn) return true;
 
         if (
-          document.querySelector('.sparkle-animating') ||
-          document.querySelector('.loading-spinner') ||
-          document.querySelector('mat-progress-bar') ||
-          document.querySelector('[data-is-generating="true"]') ||
-          document.querySelector('div.response-streaming') ||
-          document.querySelector('[aria-label*="Thinking" i]') ||
-          document.querySelector('[aria-label*="思考中" i]') ||
-          document.querySelector('model-response[aria-busy="true"], .model-response-label-announcer[aria-busy="true"]')
+          $v('.sparkle-animating') ||
+          $v('.loading-spinner') ||
+          $v('mat-progress-bar') ||
+          $v('[data-is-generating="true"]') ||
+          $v('div.response-streaming') ||
+          $v('[aria-label*="Thinking" i]') ||
+          $v('[aria-label*="思考中" i]') ||
+          $v('model-response[aria-busy="true"], .model-response-label-announcer[aria-busy="true"]')
         ) {
           return true;
         }
 
-        const cursors = document.querySelectorAll('.typing-cursor, .blinking-cursor, model-response .cursor');
+        const cursors = $$v('.typing-cursor, .blinking-cursor, model-response .cursor');
         if (cursors.length > 0) return true;
 
         return false;
@@ -341,22 +374,22 @@
 
       // 1. Explicit stop buttons
       const stopBtn = (
-        document.querySelector('button[data-testid="stop-button"]') ||
-        document.querySelector('button[data-testid*="stop" i]') ||
-        document.querySelector('button[aria-label*="Stop" i]') ||
-        document.querySelector('button[aria-label*="停止"]') ||
-        document.querySelector('button[aria-label*="中断"]') ||
-        document.querySelector('button[aria-label*="ストップ"]') ||
-        document.querySelector('button[aria-label*="生成を停止"]') ||
-        document.querySelector('button[aria-label*="streaming" i]') ||
-        document.querySelector('button[aria-label*="generating" i]') ||
-        document.querySelector('button[aria-label*="Thinking" i]') ||
-        document.querySelector('button[aria-label*="思考中" i]')
+        $v('button[data-testid="stop-button"]') ||
+        $v('button[data-testid*="stop" i]') ||
+        $v('button[aria-label*="Stop" i]') ||
+        $v('button[aria-label*="停止"]') ||
+        $v('button[aria-label*="中断"]') ||
+        $v('button[aria-label*="ストップ"]') ||
+        $v('button[aria-label*="生成を停止"]') ||
+        $v('button[aria-label*="streaming" i]') ||
+        $v('button[aria-label*="generating" i]') ||
+        $v('button[aria-label*="Thinking" i]') ||
+        $v('button[aria-label*="思考中" i]')
       );
       if (stopBtn) return true;
 
       // 2. SVG Stop square inside submit or send buttons
-      const stopSvgRect = document.querySelector(
+      const stopSvgRect = $v(
         'button[data-testid="send-button"] rect, ' +
         'button[data-testid*="send" i] rect, ' +
         '#composer-submit-button rect, ' +
@@ -366,20 +399,20 @@
 
       // 3. Streaming and thinking DOM flags
       if (
-        document.querySelector('.result-streaming') ||
-        document.querySelector('[data-is-streaming="true"]') ||
-        document.querySelector('.result-thinking') ||
-        document.querySelector('[data-testid*="streaming"]') ||
-        document.querySelector('[class*="AdaptiveStreaming"]') ||
-        document.querySelector('[class*="Streaming"]') ||
-        document.querySelector('[data-talvt-turn-state="in-progress"]') ||
-        document.querySelector('[data-turn-state="in-progress"]')
+        $v('.result-streaming') ||
+        $v('[data-is-streaming="true"]') ||
+        $v('.result-thinking') ||
+        $v('[data-testid*="streaming"]') ||
+        $v('[class*="AdaptiveStreaming"]') ||
+        $v('[class*="Streaming"]') ||
+        $v('[data-talvt-turn-state="in-progress"]') ||
+        $v('[data-turn-state="in-progress"]')
       ) {
         return true;
       }
 
       // 4. Assistant message cursor or agent turn cursor
-      const cursors = document.querySelectorAll(
+      const cursors = $$v(
         'div[data-message-author-role="assistant"] .cursor, ' +
         'div.agent-turn .cursor, ' +
         '.markdown .cursor'
@@ -391,6 +424,82 @@
       return false;
     },
 
+    // ChatGPT's activity block above an answer, measured 2026-10: a header row whose first child is
+    // button[aria-expanded] (no aria-label), with the label beside it (「思考中」 / 「3件のサイトを検索中」
+    // while working, with a shimmer; 「1m 27s考えました」 afterwards), followed by the log: step titles
+    // (data-markdown-text-tone="tertiary") and short assistant notes. The log stays in the DOM when collapsed.
+    thinkingHeader(turn) {
+      return Array.from(turn?.querySelectorAll('button[aria-expanded]:not([aria-label])') || [])
+        .find(b => !b.closest('[data-user-message-bubble], [class*="MarkdownRoot"], [id^="cgq-"], form') &&
+          b.parentElement?.parentElement) || null;
+    },
+
+    // True for answer-looking nodes that belong to the activity log rather than the answer.
+    inThinking(node) {
+      for (let el = node.parentElement; el && !el.matches('[data-turn-key], article, main, body'); el = el.parentElement) {
+        const row = el.firstElementChild;
+        if (row && row !== node && !row.contains(node) && row.querySelector(':scope > button[aria-expanded]:not([aria-label])')) return true;
+      }
+      return false;
+    },
+
+    getThinking(turn) {
+      if (!IS_CHATGPT) return null;
+      const header = this.thinkingHeader(turn);
+      if (!header) return null;
+      const row = header.parentElement;
+      const box = row.parentElement;
+      const copy = row.cloneNode(true);
+      copy.querySelectorAll('svg, [aria-hidden="true"], [class*="Sweep"], [class*="sweep"]').forEach(n => n.remove());
+      let label = (copy.textContent || '').replace(/\s+/g, ' ').trim();
+      const half = label.length / 2;
+      if (half && label.slice(0, half) === label.slice(half)) label = label.slice(0, half); // shimmer layers repeat the text
+      const body = Array.from(box.children).find(child => child !== row);
+      const log = [];
+      if (body) {
+        const roots = Array.from(body.querySelectorAll('[class*="MarkdownRoot"]'))
+          .filter((n, i, all) => !all.some((o, j) => j !== i && o.contains(n)));
+        for (const root of roots.slice(-30)) {
+          const step = root.getAttribute('data-markdown-text-tone') === 'tertiary';
+          const text = step ? (root.textContent || '').replace(/\s+/g, ' ').trim() : DOM.domToMarkdown(root).replace(/\n{3,}/g, '\n\n').trim();
+          if (text) log.push({ kind: step ? 'step' : 'text', text: text.slice(0, 2000) });
+        }
+      }
+      const skip = Array.from(turn.querySelectorAll('button, a')).find(b =>
+        /^(スキップ|Skip)$/i.test((b.textContent || '').trim()) && !b.closest('[data-user-message-bubble], [class*="MarkdownRoot"]'));
+      if (!label && !log.length) return null;
+      return {
+        label: label.slice(0, 120),
+        active: !!row.querySelector('[class*="Shimmer"], [class*="shimmer"]'),
+        expanded: header.getAttribute('aria-expanded') === 'true',
+        canSkip: !!skip && isShown(skip),
+        log
+      };
+    },
+
+    skipThinking() {
+      const turns = $$v('[data-turn-key], [data-testid^="conversation-turn-"]');
+      const turn = turns[turns.length - 1];
+      const skip = turn && Array.from(turn.querySelectorAll('button, a')).find(b => /^(スキップ|Skip)$/i.test((b.textContent || '').trim()) && isShown(b));
+      if (!skip) return false;
+      skip.click();
+      return true;
+    },
+
+    // The latest turn while ChatGPT works on it: its activity block and a status line
+    // (「接続が途切れました。回答全体の受信を待っています」). The screen-reader-only busy text is not a notice.
+    getProgress() {
+      if (!IS_CHATGPT || !this.isGenerating()) return null;
+      const selector = '[data-turn-key], [data-testid^="conversation-turn-"]';
+      const turns = $$v(selector).filter(n => !n.parentElement?.closest(selector));
+      const turn = turns[turns.length - 1];
+      if (!turn) return null;
+      const thinking = this.getThinking(turn);
+      const status = Array.from(turn.querySelectorAll('[role="status"]')).find(el => !el.matches('[aria-busy="true"]'));
+      const notice = (status?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+      return { label: thinking?.label || '', notice, thinking };
+    },
+
     getConversationLimitWarning() {
       if (!IS_CHATGPT) return null;
       // Cheap pre-check: skip the element scan unless the wording is on the page at all.
@@ -398,7 +507,7 @@
       const excluded = 'pre, code, .markdown, [data-message-author-role], [data-user-message-bubble], ' +
         '[id^="cgq-"], [class^="cgq-"], [hidden], [inert], [aria-hidden="true"]';
       // Include notices outside <main> (for example, a portal-rendered alert).
-      const candidates = document.querySelectorAll('[role="alert"], [role="status"], [data-testid*="error"], ' +
+      const candidates = $$v('[role="alert"], [role="status"], [data-testid*="error"], ' +
         '[class*="SurfaceError"], [class*="SurfaceWarning"], main div, main p, main span');
       for (const el of candidates) {
         if (el.closest(excluded)) continue;
@@ -418,8 +527,40 @@
       return null;
     },
 
+    // ChatGPT's "メッセージの配信がタイムアウトしました。もう一度お試しください。" in an alert or the latest turn.
+    hasDeliveryTimeout() {
+      const pattern = /メッセージの配信がタイムアウトしました|message delivery timed out/i;
+      if (!pattern.test(document.body?.textContent || '')) return false;
+      const turns = $$v('article, [data-testid^="conversation-turn"]');
+      const scopes = [...$$v('[role="alert"], [role="status"], [class*="toast"], [data-testid*="error"]'), turns[turns.length - 1]];
+      // Ignore the same words quoted in a prompt, in code, or in our own UI.
+      const ownText = el => {
+        const copy = el.cloneNode(true);
+        copy.querySelectorAll('pre, code, [data-user-message-bubble], [data-message-author-role="user"], [id^="cgq-"], [class*="cgq-"]').forEach(node => node.remove());
+        return copy.textContent || '';
+      };
+      return scopes.some(el => el && !el.closest('[id^="cgq-"], [class*="cgq-"]') && pattern.test(ownText(el)));
+    },
+
+    // A retry button next to an error (alerts or the latest turn), e.g. 「再試行」 / "Retry" / "Try again".
+    getRetryButton() {
+      const turns = $$v('article, [data-testid^="conversation-turn"]');
+      const scopes = [...$$v('[role="alert"], [role="status"], [class*="toast"], [data-testid*="error"]'), turns[turns.length - 1]];
+      const pattern = /^(?:再試行|もう一度試す|もう一度お試しください|リトライ|retry|try again)$/i;
+      for (const scope of scopes) {
+        const button = Array.from(scope?.querySelectorAll('button') || []).find(b => !b.disabled &&
+          (pattern.test((b.innerText || b.textContent || '').trim()) || pattern.test((b.getAttribute('aria-label') || '').trim())));
+        if (button) return button;
+      }
+      return null;
+    },
+
     getNewChatUrl() {
       const url = new URL(window.location.href);
+      if (IS_GEMINI) {
+        const account = url.pathname.match(/^\/u\/\d+/);
+        return `${url.origin}${account ? account[0] : ''}/app`;
+      }
       // Keep the current project or custom GPT when starting its next chat.
       const gpt = url.pathname.match(/^\/g\/[^/]+/);
       url.pathname = gpt ? gpt[0] : '/';
@@ -429,7 +570,7 @@
 
     checkConnectionLost() {
       if (IS_GEMINI) return false;
-      const root = document.querySelector('main') || document.body;
+      const root = $v('main') || document.body;
       if (!root) return false;
 
       // 1. Target alert/banner/toast/error containers
@@ -555,12 +696,12 @@
     getLastResponseLength() {
       try {
         if (IS_GEMINI) {
-          const turns = document.querySelectorAll('model-response, message-content, .model-response-text');
+          const turns = $$v('model-response, message-content, .model-response-text');
           if (turns.length > 0) {
             return (turns[turns.length - 1].textContent || '').length;
           }
         } else {
-          const turnElements = document.querySelectorAll('[data-message-author-role="assistant"], div.agent-turn, div.markdown');
+          const turnElements = $$v('[data-message-author-role="assistant"], div.agent-turn, div.markdown');
           if (turnElements.length > 0) {
             const lastTurn = turnElements[turnElements.length - 1];
             return (lastTurn.textContent || '').length;
@@ -572,7 +713,7 @@
 
     getEffortButton() {
       // 1. Target direct reasoning/thinking buttons or pills (ChatGPT & Gemini)
-      const direct = document.querySelector(
+      const direct = $v(
         'button[data-testid="reasoning-effort-button"], [data-testid="reasoning-pill"], ' +
         'button[data-selected-reasoning-effort], button[aria-label*="reasoning" i], ' +
         'button[aria-label*="effort" i], button[aria-label*="思考" i], button[aria-label*="推論" i], ' +
@@ -584,7 +725,7 @@
       if (direct) return direct;
 
       // 2. Gemini thinking level menu item if open or rendered in document
-      const menuItems = document.querySelectorAll('[role="menuitem"], [role="option"], mat-option');
+      const menuItems = $$v('[role="menuitem"], [role="option"], mat-option');
       for (const item of menuItems) {
         const text = (item.innerText || item.textContent || '').trim();
         if (/^(?:思考レベル|思考モード|thinking\s*level|thinking\s*budget)$/i.test(text) ||
@@ -600,10 +741,15 @@
       const info = modelPicker.info();
       const effortBtn = DOM.getEffortButton();
       const isReasoningModel = !!(info.current?.isReasoning || (info.model && /thinking|reasoning|推論|思考/i.test(info.model)));
-      const hasEffort = !!(effortBtn || (IS_GEMINI && isReasoningModel));
+      // Gemini keeps 思考レベル inside its model menu, so it exists whenever the mode picker does.
+      const geminiPicker = IS_GEMINI && $v(GEMINI_MODE_PICKER);
+      const hasEffort = !!(effortBtn || geminiPicker || (IS_GEMINI && isReasoningModel));
 
       let effort = null;
-      if (effortBtn) {
+      // On Gemini the 思考レベル menu item only opens the levels; it is never a value itself.
+      if (IS_GEMINI && (!effortBtn || effortBtn.matches('[role="menuitem"]'))) {
+        effort = DOM.readGeminiThinking() || geminiThinkingCache || 'auto';
+      } else if (effortBtn) {
         const explicitEffort = effortBtn.getAttribute('data-selected-reasoning-effort') ||
                                effortBtn.getAttribute('data-effort') ||
                                effortBtn.getAttribute('data-value');
@@ -625,9 +771,9 @@
         availableEfforts: hasEffort ? (
           IS_GEMINI ? [
             { id: 'auto', label: 'Auto', title: 'Auto', desc: '現在の思考設定を使用' },
-            { id: 'low', label: 'Low', title: '低 (Low)', desc: '思考時間を抑え高速に回答' },
-            { id: 'medium', label: 'Medium', title: '中 (Medium)', desc: '標準的な思考深度' },
-            { id: 'high', label: 'High', title: '高 (High)', desc: 'より深く思考' }
+            { id: 'low', label: '低', title: '低', desc: '時間をかけず効率的に' },
+            { id: 'medium', label: '標準', title: '標準', desc: 'バランスを取って詳しく' },
+            { id: 'high', label: '高', title: '高', desc: '徹底的に詳しく' }
           ] : [
             { id: 'auto', label: 'Auto', title: 'Auto', desc: '現在の思考設定を使用' },
             { id: 'instant', label: 'Instant', title: 'Instant (即時)', desc: '思考時間を抑え即時・高速に回答' },
@@ -643,6 +789,7 @@
     },
 
     formatEffortLabel(effort) {
+      if (IS_GEMINI && GEMINI_THINKING_LABELS[effort]) return GEMINI_THINKING_LABELS[effort][0];
       switch (effort) {
         case 'instant': return 'Instant';
         case 'off':
@@ -659,8 +806,53 @@
       return true;
     },
 
+    // Gemini: the level currently checked in an open 思考レベル submenu (null when it is not open).
+    readGeminiThinking() {
+      const selected = $v('.cdk-overlay-container .submenu-container [role="menuitem"].selected .label');
+      const label = selected?.textContent.trim();
+      const id = Object.keys(GEMINI_THINKING_LABELS).find(key => GEMINI_THINKING_LABELS[key].includes(label));
+      if (id) geminiThinkingCache = id;
+      return id || null;
+    },
+
+    // Gemini: mode picker -> 思考レベル -> 低 / 標準 / 高, matched by the exact label only
+    // (a loose match on "高" would hit "3.1 Pro 高度な推論" and switch the model instead).
+    async switchGeminiThinking(targetEffort) {
+      const labels = GEMINI_THINKING_LABELS[targetEffort];
+      const picker = $v(GEMINI_MODE_PICKER);
+      if (!labels || !picker) return false;
+      const overlay = () => $v('.cdk-overlay-container');
+      const close = () => {
+        if (!overlay()?.querySelector('[role="menu"]')) return;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+        overlay()?.querySelector('.cdk-overlay-backdrop')?.click();
+      };
+      try {
+        if (!overlay()?.querySelector('[role="menu"]')) { picker.click(); await sleep(300); }
+        const trigger = Array.from(overlay()?.querySelectorAll('[role="menuitem"]') || [])
+          .find(item => /思考レベル|thinking level/i.test(item.textContent));
+        if (!trigger) { close(); return false; }
+        for (const type of ['pointerenter', 'mouseenter', 'mouseover']) trigger.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+        trigger.click();
+        await sleep(300);
+        const option = Array.from(overlay()?.querySelectorAll('.submenu-container [role="menuitem"]') || [])
+          .find(item => labels.includes(item.querySelector('.label')?.textContent.trim()));
+        if (!option) { close(); return false; }
+        option.click();
+        geminiThinkingCache = targetEffort;
+        await sleep(200);
+        close();
+        return true;
+      } catch (e) {
+        console.warn('[ChatGPT Queue] Gemini thinking level switch failed:', e);
+        close();
+        return false;
+      }
+    },
+
     async switchReasoningEffort(targetEffort) {
       if (!targetEffort || targetEffort === 'auto') return false;
+      if (IS_GEMINI && $v(GEMINI_MODE_PICKER)) return DOM.switchGeminiThinking(targetEffort);
 
       try {
         let effortBtn = DOM.getEffortButton();
@@ -680,7 +872,7 @@
           await sleep(200);
         }
 
-        const options = Array.from(document.querySelectorAll(
+        const options = Array.from($$v(
           '[role="menuitem"], [role="menuitemradio"], [role="radio"], [role="option"], mat-option, [data-radix-collection-item], button'
         ));
 
@@ -905,20 +1097,28 @@
       }
 
       // Code blocks (<pre> or containers with code)
-      if (tag === 'pre' || (tag === 'div' && root.querySelector('code') && (root.className.includes('code') || root.querySelector('button, [class*="copy"]')))) {
-        const codeEl = root.querySelector('code') || root;
+      // A code block: <pre>; a box holding one <pre> plus a short header ("JavaScript", copy buttons);
+      // or a div that wraps code without a <pre>. None of them may hold other answer content
+      // (an answer's outer container also has inline <code> and buttons, and must not match).
+      const blockContent = 'p, li, h1, h2, h3, h4, h5, h6, table, blockquote';
+      const ownText = node => Array.from(node.childNodes).filter(c => c.nodeType === 3).map(c => c.textContent).join('').trim();
+      const pres = tag === 'div' ? root.querySelectorAll('pre') : [];
+      const isCodeBox = pres.length === 1 && !root.querySelector(blockContent) &&
+        root.textContent.length - pres[0].textContent.length < 40;
+      const isCodeDiv = tag === 'div' && !pres.length && root.querySelector('code') && !root.querySelector(blockContent) &&
+        (root.className.includes('code') || root.querySelector('button, [class*="copy"]'));
+      if (tag === 'pre' || isCodeBox || isCodeDiv) {
+        const pre = isCodeBox ? pres[0] : root;
+        const codeEl = pre.querySelector('code') || pre;
         let lang = '';
-        const cls = (codeEl.className || '') + ' ' + (root.className || '');
+        const cls = (codeEl.className || '') + ' ' + (pre.className || '');
         const m = cls.match(/language-([a-zA-Z0-9_-]+)/);
         if (m) lang = m[1];
-        if (!lang) {
-          const header = root.querySelector('.text-xs, [class*="language"], span');
-          if (header) {
-            const t = header.textContent.trim().toLowerCase();
-            if (t && !t.includes('copy') && !t.includes('コピー') && t.length < 24) {
-              lang = t;
-            }
-          }
+        // The header label beside the code ("JavaScript"); never the highlighted tokens inside it.
+        if (!lang && tag !== 'pre') {
+          const label = Array.from(root.querySelectorAll('*')).find(node => !pre.contains(node) && node !== pre &&
+            /^[A-Za-z][\w#+.\- ]{0,20}$/.test(ownText(node)) && !/^(copy|コピー)$/i.test(ownText(node)));
+          if (label) lang = ownText(label).toLowerCase();
         }
         const codeText = codeEl.textContent.trim();
         // Auto detect diagram languages if not set or set to generic text
@@ -1011,6 +1211,11 @@
       }
 
       // Bold
+      // ChatGPT renders **bold** as <span data-d-default-strong> (or a bold data-d-weight).
+      if (tag === 'span' && root.hasAttribute('data-d-inline') &&
+        (root.hasAttribute('data-d-default-strong') || /^(?:bold|semibold)$/.test(root.getAttribute('data-d-weight') || ''))) {
+        return '**' + Array.from(root.childNodes).map(DOM.domToMarkdown).join('') + '**';
+      }
       if (tag === 'strong' || tag === 'b') {
         return '**' + Array.from(root.childNodes).map(DOM.domToMarkdown).join('') + '**';
       }
@@ -1035,6 +1240,67 @@
       }
 
       return Array.from(root.childNodes).map(DOM.domToMarkdown).join('');
+    },
+
+    // Choice widgets inside an answer (radio options + a submit button, e.g. 「修正方針を選択」).
+    // Each group is identified by its option labels, so the dashboard can apply a choice later.
+    choiceGroups(container) {
+      const radios = Array.from(container?.querySelectorAll('input[type="radio"], [role="radio"]') || []);
+      const groups = [];
+      for (const radio of radios) {
+        let box = radio.closest('[role="radiogroup"], fieldset');
+        if (!box) {
+          for (let node = radio.parentElement; node && node !== container; node = node.parentElement) {
+            if (node.querySelectorAll('input[type="radio"], [role="radio"]').length > 1) { box = node; break; }
+          }
+        }
+        box ||= radio.parentElement;
+        let group = groups.find(g => g.box === box);
+        if (!group) groups.push(group = { box, radios: [] });
+        group.radios.push(radio);
+      }
+      return groups.map(({ box, radios: items }) => {
+        const options = items.map(radio => {
+          const row = (radio.id && box.ownerDocument.querySelector(`label[for="${CSS.escape(radio.id)}"]`)) ||
+            radio.closest('label') || (radio.matches('[role="radio"]') ? radio : radio.parentElement);
+          // Title + description: rendered lines when available, otherwise the separate text elements.
+          let lines = String(row?.innerText || '').split('\n').map(line => line.trim()).filter(Boolean);
+          if (lines.length < 2 && row) {
+            const leaves = Array.from(row.querySelectorAll('*'))
+              .filter(node => !node.children.length && node !== radio && node.textContent.trim())
+              .map(node => node.textContent.trim());
+            if (leaves.length) lines = leaves;
+          }
+          if (!lines.length) lines = [String(row?.textContent || radio.getAttribute('aria-label') || '').trim()];
+          const checked = radio.matches('input') ? radio.checked : radio.getAttribute('aria-checked') === 'true';
+          return { el: radio, label: lines[0] || radio.getAttribute('aria-label') || '', desc: lines.slice(1).join(' '), checked };
+        });
+        // The submit button: the last labelled button around the group that is not an option itself.
+        const scope = box.closest('form') || box.parentElement || box;
+        const submit = Array.from(scope.querySelectorAll('button')).filter(button =>
+          !button.matches('[role="radio"]') && !items.some(radio => button.contains(radio) || radio.contains(button)) &&
+          (button.innerText || button.textContent || '').trim()).pop() || null;
+        const done = items.every(radio => radio.disabled || radio.getAttribute('aria-disabled') === 'true') || !!submit?.disabled;
+        return { key: options.map(o => o.label).join('|'), options, submit, done };
+      }).filter(g => g.options.length > 1 && g.key.replace(/\|/g, ''));
+    },
+
+    extractChoices(container) {
+      return this.choiceGroups(container).map(({ key, options, submit, done }) => ({
+        key, done,
+        options: options.map(({ label, desc, checked }) => ({ label, desc, checked })),
+        submitLabel: (submit?.innerText || submit?.textContent || '').trim()
+      }));
+    },
+
+    async applyChoice(key, optionIndex) {
+      const group = this.choiceGroups($v('main') || document.body).reverse().find(g => g.key === key);
+      const option = group?.options[optionIndex];
+      if (!option || group.done) return false;
+      option.el.click();
+      await sleep(200);
+      if (group.submit && !group.submit.disabled) group.submit.click();
+      return true;
     },
 
     extractAnswerMarkdown(node) {
@@ -1104,6 +1370,9 @@
       try {
         const isAnswerNode = node => {
           if (node.closest(CHROME_SELECTOR)) return false;
+          if (IS_CHATGPT && DOM.inThinking(node)) return false;
+          // The sidebar is never an answer (its profile shows 「プロフィールを読み込み中」 with aria-busy).
+          if (node.closest('nav, aside, header, [id^="cgq-"]')) return false;
           if (node.querySelectorAll('a[href*="/app/"], a[href*="/c/"]').length >= 3 && !node.closest('model-response, [data-message-author-role="assistant"], chat-window, article')) return false;
           return true;
         };
@@ -1129,7 +1398,7 @@
           'div[data-message-id]'
         ];
 
-        let assistantNodes = Array.from(document.querySelectorAll(assistantSelectors.join(', ')));
+        let assistantNodes = Array.from($$v(assistantSelectors.join(', ')));
         if (IS_GEMINI) assistantNodes = assistantNodes.filter(node => node.closest('model-response'));
         assistantNodes = assistantNodes.filter(isAnswerNode);
 
@@ -1138,13 +1407,13 @@
 
         // 1. Look for markdown content or model response
         if (IS_GEMINI) {
-          const geminiModels = Array.from(document.querySelectorAll('model-response')).filter(isAnswerNode);
+          const geminiModels = Array.from($$v('model-response')).filter(isAnswerNode);
           if (geminiModels.length > 0) {
             const lastMR = geminiModels[geminiModels.length - 1];
             answerText = DOM.extractAnswerMarkdown(lastMR);
           }
         } else {
-          const markdownEls = Array.from(document.querySelectorAll(
+          const markdownEls = Array.from($$v(
             'model-response, message-content, .model-response-text, .markdown, [class*="markdown"], [class*="MarkdownRoot"], [class*="DilResponseRoot"], [class*="DilRenderer"], [data-dil-message-id]'
           )).filter(isAnswerNode);
 
@@ -1170,9 +1439,9 @@
 
         // 3. Fallback: check streaming element
         if (!answerText) {
-          const streamEl = document.querySelector(
+          const streamEl = $$v(
             '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [aria-busy="true"], [class*="AdaptiveStreaming"], [class*="Streaming"]'
-          );
+          ).find(el => !el.closest('nav, aside, header, form, [id^="cgq-"], [role="status"]'));
           if (streamEl) {
             answerText = DOM.extractAnswerMarkdown(streamEl);
             isStreaming = true;
@@ -1182,14 +1451,14 @@
         // Find user prompt
         let userPrompt = '';
         if (IS_GEMINI) {
-          const geminiQueries = Array.from(document.querySelectorAll('user-query')).filter(n => !n.closest(CHROME_SELECTOR));
+          const geminiQueries = Array.from($$v('user-query')).filter(n => !n.closest(CHROME_SELECTOR));
           if (geminiQueries.length > 0) {
             userPrompt = DOM.cleanUserPrompt(geminiQueries[geminiQueries.length - 1]);
           }
         }
 
         if (!userPrompt) {
-          const userNodes = Array.from(document.querySelectorAll(
+          const userNodes = Array.from($$v(
             '[data-message-author-role="user"], ' +
             '[data-user-message-bubble="true"], ' +
             '[class*="user-turn"], ' +
@@ -1206,7 +1475,7 @@
         }
 
         if (!userPrompt && !IS_GEMINI) {
-          const candidateTurnEls = Array.from(document.querySelectorAll(
+          const candidateTurnEls = Array.from($$v(
             'article, [data-turn-key], [data-testid^="conversation-turn-"], [data-message-author-role="user"]'
           )).filter(n => {
             return !n.closest('#prompt-textarea') && !n.closest('rich-textarea') && !n.closest('#cgq-widget') && !n.closest('#cgq-composer-queue-panel') && !n.closest(CHROME_SELECTOR);
@@ -1247,20 +1516,23 @@
       return null;
     },
 
-    getRecentQAHistory(lastSentPrompt) {
+    getRecentQAHistory(lastSentPrompt, limit = 50) {
       try {
         const isAnswerNode = node => {
           if (node.closest(CHROME_SELECTOR)) return false;
+          if (IS_CHATGPT && DOM.inThinking(node)) return false;
+          // The sidebar is never an answer (its profile shows 「プロフィールを読み込み中」 with aria-busy).
+          if (node.closest('nav, aside, header, [id^="cgq-"]')) return false;
           if (node.querySelectorAll('a[href*="/app/"], a[href*="/c/"]').length >= 3 && !node.closest('model-response, [data-message-author-role="assistant"], chat-window, article')) return false;
           return true;
         };
 
         // 1. Gemini explicit pairing (user-query + model-response)
         if (IS_GEMINI) {
-          const userNodes = Array.from(document.querySelectorAll('user-query')).filter(n => !n.closest(CHROME_SELECTOR));
-          const modelNodes = Array.from(document.querySelectorAll('model-response')).filter(isAnswerNode);
+          const userNodes = Array.from($$v('user-query')).filter(n => !n.closest(CHROME_SELECTOR));
+          const modelNodes = Array.from($$v('model-response')).filter(isAnswerNode);
           const count = Math.max(userNodes.length, modelNodes.length);
-          const start = Math.max(0, count - 50);
+          const start = Math.max(0, count - limit);
           const list = [];
           for (let i = start; i < count; i++) {
             const uText = (userNodes[i] ? DOM.cleanUserPrompt(userNodes[i]) : '') || (i === count - 1 ? (lastSentPrompt || '') : '');
@@ -1269,7 +1541,7 @@
             const isStreaming = (i === count - 1) && DOM.isGenerating();
 
             if (!aText && isStreaming) {
-              const streamEl = document.querySelector(
+              const streamEl = $v(
                 '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]'
               );
               if (streamEl) {
@@ -1278,11 +1550,13 @@
             }
 
             if (uText || aText) {
+              const choices = mNode ? DOM.extractChoices(mNode) : [];
               list.push({
                 turn: i + 1,
                 prompt: uText,
                 answer: aText,
-                isStreaming: isStreaming
+                isStreaming: isStreaming,
+                ...(choices.length ? { choices } : {})
               });
             }
           }
@@ -1290,7 +1564,7 @@
           // If active generation is happening on a newly sent prompt not yet rendered in userNodes
           if (list.length > 0 && DOM.isGenerating() && lastSentPrompt && list[list.length - 1].prompt !== lastSentPrompt) {
             let streamText = '';
-            const streamEl = document.querySelector(
+            const streamEl = $v(
               '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]'
             );
             if (streamEl) streamText = DOM.extractAnswerMarkdown(streamEl);
@@ -1306,7 +1580,7 @@
         }
 
         // 2. Turn-based matching (Modern & Legacy ChatGPT / DIL)
-        const candidateTurnEls = Array.from(document.querySelectorAll(
+        const candidateTurnEls = Array.from($$v(
           'article, [data-turn-key], [data-testid^="conversation-turn-"], [data-message-author-role="user"], [data-message-author-role="assistant"], [data-user-message-bubble="true"]'
         )).filter(n => {
           return !n.closest('#prompt-textarea') &&
@@ -1319,9 +1593,13 @@
         });
 
         // Filter out elements contained within another candidate element to get top-level turn elements in document order
+        // One element per turn: drop nested candidates and any second copy of the same turn key.
         const turnEls = candidateTurnEls.filter((node, idx) =>
           !candidateTurnEls.some((other, oIdx) => oIdx !== idx && other.contains(node))
-        );
+        ).filter((node, idx, list) => {
+          const key = node.getAttribute('data-turn-key');
+          return !key || list.findLastIndex(other => other.getAttribute('data-turn-key') === key) === idx;
+        });
 
         if (turnEls.length > 0) {
           // Check if any turn contains both user and assistant (combined turn wrapper)
@@ -1333,7 +1611,7 @@
 
           if (hasCombinedTurns) {
             const list = [];
-            const start = Math.max(0, turnEls.length - 50);
+            const start = Math.max(0, turnEls.length - limit);
             for (let i = start; i < turnEls.length; i++) {
               const turn = turnEls[i];
               const userEl = turn.querySelector('[data-user-message-bubble="true"], [data-message-author-role="user"]');
@@ -1353,18 +1631,22 @@
               if (!aText && isStreaming) {
                 const streamEl = turn.querySelector(
                   '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]'
-                ) || document.querySelector('.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]');
+                ) || $v('.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]');
                 if (streamEl) {
                   aText = DOM.extractAnswerMarkdown(streamEl);
                 }
               }
 
               if (uText || aText) {
+                const choices = DOM.extractChoices(turn);
+                const thinking = DOM.getThinking(turn);
                 list.push({
                   turn: i + 1,
                   prompt: uText,
                   answer: aText,
-                  isStreaming: isStreaming
+                  isStreaming: isStreaming,
+                  ...(choices.length ? { choices } : {}),
+                  ...(thinking ? { thinking } : {})
                 });
               }
             }
@@ -1430,7 +1712,7 @@
                 if (!aText && isStreamingTurn) {
                   const streamEl = turn.querySelector(
                     '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]'
-                  ) || document.querySelector('.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]');
+                  ) || $v('.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]');
                   if (streamEl) {
                     aText = DOM.extractAnswerMarkdown(streamEl);
                   }
@@ -1453,6 +1735,8 @@
                   };
                   list.push(currentQA);
                 }
+                const choices = DOM.extractChoices(turn);
+                if (choices.length) currentQA.choices = choices;
               }
             }
 
@@ -1461,7 +1745,7 @@
               const lastQA = list[list.length - 1];
               lastQA.isStreaming = true;
               if (!lastQA.answer) {
-                const streamEl = document.querySelector(
+                const streamEl = $v(
                   '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]'
                 );
                 if (streamEl) {
@@ -1473,7 +1757,7 @@
             // If user just sent a new prompt and is generating, but DOM hasn't rendered the new user turn yet
             if (list.length > 0 && DOM.isGenerating() && lastSentPrompt && list[list.length - 1].prompt !== lastSentPrompt) {
               let streamText = '';
-              const streamEl = document.querySelector(
+              const streamEl = $v(
                 '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]'
               );
               if (streamEl) streamText = DOM.extractAnswerMarkdown(streamEl);
@@ -1497,12 +1781,12 @@
 
         // 3. Element list matching (Gemini / Standard ChatGPT / Fallback)
         const list = [];
-        const users = Array.from(document.querySelectorAll(
+        const users = Array.from($$v(
           '[data-message-author-role="user"], [data-user-message-bubble="true"], [class*="user-turn"], ' +
           'user-query, .user-query, div.query-text, [data-test-id="user-query"]'
         )).filter(n => !n.closest('#prompt-textarea') && !n.closest('rich-textarea') && !n.closest('#cgq-widget') && !n.closest('#cgq-composer-queue-panel') && !n.closest(CHROME_SELECTOR));
 
-        const markdownEls = Array.from(document.querySelectorAll(
+        const markdownEls = Array.from($$v(
           'model-response, message-content, .model-response-text, .markdown, [class*="markdown"], [class*="MarkdownRoot"], [class*="DilResponseRoot"], [class*="DilRenderer"], [data-dil-message-id], [data-message-author-role="assistant"], [data-markdown-text-style="assistant-message"]'
         )).filter(isAnswerNode);
 
@@ -1519,7 +1803,7 @@
           const isStreaming = (i === count - 1) && DOM.isGenerating();
 
           if (!aText && isStreaming) {
-            const streamEl = document.querySelector(
+            const streamEl = $v(
               '.result-streaming, [data-is-streaming="true"], div.response-streaming, .sparkle-animating, [class*="AdaptiveStreaming"], [class*="Streaming"]'
             );
             if (streamEl) {
@@ -1544,7 +1828,7 @@
 
     getScrollContainer() {
       // 1. 会話ターンや入力欄の祖先スクローラーを優先探索
-      const anchor = document.querySelector(
+      const anchor = $v(
         'div[data-message-author-role="assistant"]:last-of-type, ' +
         'article[data-testid^="conversation-turn-"]:last-of-type, ' +
         'article:last-of-type, ' +
@@ -1571,12 +1855,12 @@
       }
 
       if (IS_GEMINI) {
-        const geminiScroller = document.querySelector('infinite-scroller, .chat-history, main');
+        const geminiScroller = $v('infinite-scroller, .chat-history, main');
         if (geminiScroller && geminiScroller.scrollHeight > geminiScroller.clientHeight) {
           return geminiScroller;
         }
       }
-      const candidates = document.querySelectorAll(
+      const candidates = $$v(
         'main div[class*="react-scroll-to-bottom"], main [class*="overflow-y-auto"], main, [role="presentation"] .overflow-y-auto'
       );
       for (const el of candidates) {
@@ -1875,7 +2159,7 @@
     }
 
     static userNodes() {
-      return Array.from(document.querySelectorAll(
+      return $$v((
         '[data-message-author-role="user"], ' +
         '[data-user-message-bubble="true"], ' +
         '[class*="user-turn"], ' +
@@ -2220,12 +2504,18 @@
       const isLost = DOM.checkConnectionLost();
       if (isLost) {
         const now = Date.now();
-        if (!this.connectionLostSince) {
+        // Wait at least 2 minutes, and start over while the answer is still arriving:
+        // reloading mid-receive would throw that text away.
+        const answerLength = DOM.getLastResponseLength();
+        if (!this.connectionLostSince || answerLength !== this.connectionLostAnswerLength) {
+          if (!this.connectionLostSince) {
+            console.warn('[ChatGPT Queue] Connection lost detected ("接続が途切れました。回答全体の受信を待っています"). Reloading after at least 2 minutes without new answer text.');
+          }
           this.connectionLostSince = now;
-          console.warn('[ChatGPT Queue] Connection lost detected ("接続が途切れました。回答全体の受信を待っています"). Reload scheduled within 2 minutes.');
+          this.connectionLostAnswerLength = answerLength;
         }
 
-        const timeoutSec = this.settings.disconnectReloadTimeout || 120;
+        const timeoutSec = Math.max(120, this.settings.disconnectReloadTimeout || 120);
         const timeoutMs = timeoutSec * 1000;
         const elapsed = now - this.connectionLostSince;
         const remainingMs = Math.max(0, timeoutMs - elapsed);
@@ -2236,7 +2526,7 @@
           : `${remainingSec}秒`;
 
         this.currentAction = `接続切断中: ${countdownText}後に再読込`;
-        this.progressText = `接続が途切れました (2分以内に再読み込み: 残り ${countdownText})`;
+        this.progressText = `接続が途切れました (回答の受信が止まってから2分後に再読み込み: 残り ${countdownText})`;
         this.progressPercent = Math.min(100, Math.round((elapsed / timeoutMs) * 100));
 
         if (this.currentState !== QueueState.CONNECTION_LOST) {
@@ -2246,7 +2536,7 @@
         }
 
         if (elapsed >= timeoutMs) {
-          console.warn('[ChatGPT Queue] 2 minutes elapsed while connection lost. Executing page reload now...');
+          console.warn('[ChatGPT Queue] No new answer text for 2 minutes while disconnected. Reloading the page now...');
           this.connectionLostSince = null;
           try { this.saveQueue(); } catch (e) {}
           this.reloadPage();
@@ -2278,19 +2568,10 @@
       window.location.assign(url);
     }
 
-    async checkConversationLimitAndStartNewChat() {
-      if (this.switchingChatSince) {
-        if (Date.now() - this.switchingChatSince < 15000) return true;
-        this.switchingChatSince = null;
-        this.chatRolloverFailed = true;
-        sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
-        this.isPaused = true;
-        this.setState(QueueState.PAUSED, '新しいチャットを開けませんでした。キューを保持して停止しました。');
-      }
-      if (this.chatRolloverFailed || !DOM.getConversationLimitWarning()) return false;
-
+    // Open a new chat in this tab and carry the remaining queue (with each item's tools) over to it.
+    async startNewChat(reason) {
       this.switchingChatSince = Date.now();
-      this.setState(QueueState.WAITING_GENERATION, '会話の長さ上限に達したため、新しいチャットを開始中...');
+      this.setState(QueueState.WAITING_GENERATION, reason);
       try {
         // Store before navigating: a full page load must not lose the pending queue.
         await chrome.storage.local.set({ [this.storageKeyQueue]: this.items });
@@ -2308,6 +2589,107 @@
         this.isPaused = true;
         this.setState(QueueState.PAUSED, '新しいチャットを開けませんでした。キューを保持して停止しました。');
       }
+    }
+
+    // Delivery timed out: press the retry button if there is one; still failing after 30s (or no
+    // button) -> reload once; still failing after the reload -> continue in a new chat with the
+    // timed-out prompt put back at the front of the queue. The step survives the reload in sessionStorage.
+    async checkDeliveryTimeout() {
+      if (this.switchingChatSince || this.chatRolloverFailed) return false;
+      let mark;
+      try { mark = JSON.parse(sessionStorage.getItem(SESSION_KEY_TIMEOUT) || 'null'); } catch (e) { mark = null; }
+      const now = Date.now();
+      if (mark && now - mark.at > 10 * 60 * 1000) mark = null;
+      const sentRecord = sessionStorage.getItem(SESSION_KEY_STALL);
+      if ((!sentRecord && this.items.length === 0) || !DOM.hasDeliveryTimeout()) {
+        if (mark && now - mark.at > 60 * 1000) sessionStorage.removeItem(SESSION_KEY_TIMEOUT); // recovered
+        return false;
+      }
+      const setMark = step => sessionStorage.setItem(SESSION_KEY_TIMEOUT, JSON.stringify({ step, at: now }));
+
+      if (!mark) {
+        const retry = DOM.getRetryButton();
+        if (retry) {
+          setMark('retry');
+          console.warn('[ChatGPT Queue] Message delivery timed out. Pressing the retry button.');
+          this.setState(QueueState.WAITING_GENERATION, 'メッセージの配信がタイムアウトしたため再試行しています...');
+          retry.click();
+          return true;
+        }
+      }
+      if (mark?.step === 'retry' && now - mark.at < 30 * 1000) return true; // give the retry time
+      if (!mark || mark.step === 'retry') {
+        setMark('reload');
+        console.warn('[ChatGPT Queue] Message delivery timed out. Reloading the page once.');
+        this.setState(QueueState.WAITING_GENERATION, 'メッセージの配信がタイムアウトしたため再読み込みします...');
+        await this.saveQueue();
+        this.reloadPage();
+        return true;
+      }
+      sessionStorage.removeItem(SESSION_KEY_TIMEOUT);
+      try {
+        const stall = JSON.parse(sentRecord || 'null');
+        if (stall?.item) this.items.unshift({ ...stall.item, id: `timeout_${now}` });
+      } catch (e) {}
+      sessionStorage.removeItem(SESSION_KEY_STALL);
+      console.warn('[ChatGPT Queue] Delivery still timing out after a reload. Continuing in a new chat.');
+      await this.startNewChat('再読み込み後も配信がタイムアウトするため、新しいチャットで続けます...');
+      return true;
+    }
+
+    // After a send, remember what was sent. If the answer then shows no progress at all for
+    // STALL_MS (still "generating", disconnected, or never started), put that prompt back at the
+    // front of the queue and continue in a new chat. Kept in sessionStorage so the 2-minute
+    // reconnect reload does not reset the clock.
+    rememberSent(item) {
+      try {
+        sessionStorage.setItem(SESSION_KEY_STALL, JSON.stringify({
+          item: { text: item.text, tools: item.tools || [], model: item.model, effort: item.effort },
+          url: this.currentUrl, sentAt: Date.now(), since: Date.now(),
+          baseLength: DOM.getLastResponseLength(), sig: ''
+        }));
+      } catch (e) {}
+    }
+
+    async checkStalledAndStartNewChat() {
+      let stall;
+      try { stall = JSON.parse(sessionStorage.getItem(SESSION_KEY_STALL) || 'null'); } catch (e) { stall = null; }
+      if (!stall || this.isPaused || this.switchingChatSince || this.chatRolloverFailed) return false;
+      const now = Date.now();
+      const generating = DOM.isGenerating();
+      const length = DOM.getLastResponseLength();
+      // Only real progress counts: the 2-minute reconnect reload flips generating / disconnected flags.
+      const sig = `${length}:${HumanSimulator.userNodes().length}`;
+      const answered = !generating && !this.connectionLostSince && length !== stall.baseLength && now - stall.sentAt > 5000;
+      if (answered) {
+        sessionStorage.removeItem(SESSION_KEY_STALL);
+        return false;
+      }
+      if (sig !== stall.sig) {
+        stall.sig = sig;
+        stall.since = now;
+        sessionStorage.setItem(SESSION_KEY_STALL, JSON.stringify(stall));
+        return false;
+      }
+      if (now - stall.since < STALL_MS) return false;
+      sessionStorage.removeItem(SESSION_KEY_STALL);
+      console.warn('[ChatGPT Queue] No answer progress for 1 hour. Re-queueing the prompt in a new chat.');
+      this.items.unshift({ ...stall.item, id: `stall_${now}` });
+      await this.startNewChat('1時間以上応答がないため、新しいチャットで続きを送信します...');
+      return true;
+    }
+
+    async checkConversationLimitAndStartNewChat() {
+      if (this.switchingChatSince) {
+        if (Date.now() - this.switchingChatSince < 15000) return true;
+        this.switchingChatSince = null;
+        this.chatRolloverFailed = true;
+        sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, '新しいチャットを開けませんでした。キューを保持して停止しました。');
+      }
+      if (this.chatRolloverFailed || !DOM.getConversationLimitWarning()) return false;
+      await this.startNewChat('会話の長さ上限に達したため、新しいチャットを開始中...');
       return true;
     }
 
@@ -2551,7 +2933,14 @@
         // Record completed QA
         if (latestAns && latestAns.text && !latestAns.isStreaming && latestAns.text !== '（思考中・回答を生成しています...）') {
           const qText = latestAns.userPrompt || this.lastSentPrompt;
-          if (qText && !this.completedQA.some(c => c.prompt === qText && c.answer === latestAns.text)) {
+          // The latest turn is the same turn while its prompt is unchanged, even when its text changes
+          // completely (an agent-style turn shows one log line after another: 「PDFスキル…を確認」→「修正方針を確認」).
+          const last = this.completedQA[this.completedQA.length - 1];
+          const known = qText && ((last && turnText(last.prompt) === turnText(qText) ? last : null) ||
+            this.completedQA.find(c => sameTurn(c, { prompt: qText, answer: latestAns.text })));
+          if (known) {
+            known.answer = latestAns.text; // the answer can still change after it finished (sources, formatting)
+          } else if (qText) {
             this.completedQA.push({
               prompt: qText,
               answer: latestAns.text,
@@ -2564,8 +2953,10 @@
         // Merge DOM history with completedQA so historical turns are never lost
         let mergedQA = [...recentHistory];
         if (this.completedQA && this.completedQA.length > 0) {
+          // Only turns the page no longer shows; the same turn read slightly differently is not new.
+          // A prompt the page still shows is that turn, whatever its answer looked like when recorded.
           this.completedQA.forEach(c => {
-            if (!mergedQA.some(m => m.prompt === c.prompt && m.answer === c.answer)) {
+            if (!mergedQA.some(m => sameTurn(m, c) || (c.prompt && turnText(m.prompt) === turnText(c.prompt)))) {
               mergedQA.push({
                 prompt: c.prompt,
                 answer: c.answer,
@@ -2575,6 +2966,7 @@
           });
         }
 
+        mergedQA = dropRepeatedTurns(mergedQA);
         mergedQA.forEach((qa, idx) => {
           qa.turn = idx + 1;
         });
@@ -2609,6 +3001,12 @@
           isStreaming: mergedQA[mergedQA.length - 1].isStreaming || false,
           timestamp: Date.now()
         } : latestAns);
+
+        const progress = DOM.getProgress();
+        if (finalAnswer) {
+          if (progress && finalAnswer.isStreaming !== false) finalAnswer.progress = progress;
+          else delete finalAnswer.progress;
+        }
 
         const modelInfo = DOM.getCurrentModelInfo();
 
@@ -2670,6 +3068,12 @@
         this.removeItem(cmd.id);
       } else if (cmd.action === 'MOVE_ITEM') {
         this.moveItem(cmd.id, cmd.direction);
+      } else if (cmd.action === 'SKIP_THINKING') {
+        showToast(DOM.skipThinking() ? '思考をスキップしました' : 'スキップできる思考はありません');
+      } else if (cmd.action === 'CHOOSE_OPTION') {
+        DOM.applyChoice(cmd.key, cmd.option).then(ok => {
+          showToast(ok ? '選択を送信しました' : 'この選択肢はもう選べません');
+        });
       } else if (cmd.action === 'ENQUEUE') {
         this.enqueue(cmd.text, { model: cmd.model, effort: cmd.effort, tools: cmd.tools });
       } else if (cmd.action === 'ENQUEUE_MANY') {
@@ -2856,6 +3260,8 @@
         await this.checkUrlChange();
 
         if (await this.checkConversationLimitAndStartNewChat()) continue;
+        if (await this.checkDeliveryTimeout()) continue;
+        if (await this.checkStalledAndStartNewChat()) continue;
 
         if (this.checkConnectionAndAutoReload()) {
           await sleep(1000);
@@ -3160,6 +3566,7 @@
         }
 
         if (sent) {
+          this.rememberSent(nextItem);
           this.leftoverDraft = null;
           this.sendFailures = 0;
           this.lastSentTimestamp = Date.now();
@@ -3753,43 +4160,59 @@
         injectButton();
       };
 
+      // Two icon buttons beside the send button: "+" always adds the composer text to the queue
+      // (an empty composer only shows a notice), the list icon opens the bulk panel.
       const injectButton = () => {
         const placement = DOM.getQueueButtonPlacement();
         if (!placement) return;
 
-        const oldBtn = document.getElementById('cgq-injected-btn');
-        if (oldBtn?.parentElement === placement.parent) return;
-        if (oldBtn) {
-          placement.parent.insertBefore(oldBtn, placement.before);
-          return;
+        let btn = document.getElementById('cgq-injected-btn');
+        let bulk = document.getElementById('cgq-injected-bulk-btn');
+        if (btn && bulk && btn.parentElement === placement.parent && btn.nextElementSibling === bulk) return;
+
+        if (!btn) {
+          btn = document.createElement('button');
+          btn.id = 'cgq-injected-btn';
+          btn.className = 'cgq-injected-btn';
+          btn.type = 'button';
+          btn.title = '入力内容をキューに追加';
+          btn.setAttribute('aria-label', '入力内容をキューに追加');
+          btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
+          btn.onclick = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            // The queue's own typing must not be captured back into the queue.
+            if (this.qm.isComposerLocked()) {
+              showToast('キューが入力欄を使用中です');
+              return;
+            }
+            const text = DOM.getComposerText();
+            if (!text) {
+              showToast('入力欄が空です');
+              return;
+            }
+            // Always queued, even when the chat is idle (the queue loop sends it in turn).
+            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
+            DOM.clearComposer();
+            showToast('キューに追加しました');
+          };
         }
-
-        const btn = document.createElement('button');
-        btn.id = 'cgq-injected-btn';
-        btn.className = 'cgq-injected-btn';
-        btn.type = 'button';
-        btn.title = '現在の入力内容をこのタブのキューに追加 (Enter / Alt+Enter)';
-        btn.innerHTML = `
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-          <span>Queue</span>
-        `;
-
-        btn.onclick = async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const text = DOM.getComposerText();
-          if (!text) {
+        if (!bulk) {
+          bulk = document.createElement('button');
+          bulk.id = 'cgq-injected-bulk-btn';
+          bulk.className = 'cgq-injected-btn';
+          bulk.type = 'button';
+          bulk.title = 'プロンプトを一括追加 (1行1プロンプト)';
+          bulk.setAttribute('aria-label', 'プロンプトを一括追加');
+          bulk.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>';
+          bulk.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             this.showBulkAddModal();
-            return;
-          }
-          await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-          DOM.clearComposer();
-        };
-
+          };
+        }
         placement.parent.insertBefore(btn, placement.before);
+        placement.parent.insertBefore(bulk, btn.nextSibling);
       };
 
       updateUIPlacement();
@@ -3804,6 +4227,14 @@
 
     setupKeyboardShortcuts() {
       // キュー自身が入力欄を操作中は横取りしない（入力欄の文字をキューに取り込んで消してしまうため）
+      // True for elements of the prompt composer itself, not buttons or forms elsewhere on the page
+      // (an answer's choice widget has its own submit button, e.g. 「この方針で修正する」).
+      const isComposerControl = el => {
+        const input = DOM.getPromptInput();
+        const composer = input?.closest('form, input-area, input-container, .text-input-field');
+        return !!(composer && el && composer.contains(el));
+      };
+
       const swallowIfLocked = (e) => {
         if (!this.qm.isComposerLocked()) return false;
         e.preventDefault();
@@ -3913,8 +4344,8 @@
         const sendBtn = e.target.closest(
           'button[data-testid="send-button"], #composer-submit-button, button[aria-label*="Send" i], button[aria-label*="送信"], button.send-button, button[mattooltip*="Send" i]'
         );
-        if (!sendBtn) return;
-        if (e.target.closest('#cgq-injected-btn')) return;
+        if (!sendBtn || !isComposerControl(sendBtn)) return;
+        if (e.target.closest('#cgq-injected-btn, #cgq-injected-bulk-btn')) return;
 
         // If it's a stop button, allow user to cancel generation normally
         const isStopBtn = (
@@ -3955,6 +4386,8 @@
       // 3. Form submit interceptor (fallback)
       document.addEventListener('submit', async (e) => {
         if (!e.isTrusted) return;
+        // Only the prompt composer: forms inside answers (choice widgets etc.) submit normally.
+        if (!isComposerControl(e.target)) return;
 
         // キュー自身の送信（PRE_SEND中の sendBtn.click）は素通しする。
         // ここで止めると送信されず、入力欄の文字がキューに再追加されてしまう。
@@ -4299,8 +4732,42 @@
     new QueueUI(queueManager);
   });
 
+  // Nearest scrollable ancestor (the page's own conversation scroller).
+  const scrollParentOf = el => {
+    for (let node = el?.parentElement; node && node !== document.body; node = node.parentElement) {
+      const overflow = getComputedStyle(node).overflowY;
+      if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight + 1) return node;
+    }
+    return document.scrollingElement;
+  };
+
+  // Every turn the page holds. When the dashboard already has them all, scroll the page's own
+  // conversation to the top once so ChatGPT / Gemini load older turns, then put the scroll back.
+  async function getOlderHistory(have) {
+    const read = () => DOM.getRecentQAHistory(queueManager.lastSentPrompt, Infinity);
+    let turns = read();
+    if (turns.length <= have) {
+      const scroller = scrollParentOf(HumanSimulator.userNodes()[0]);
+      if (scroller) {
+        const { scrollTop, scrollHeight } = scroller;
+        const before = HumanSimulator.userNodes().length;
+        scroller.scrollTop = 1;
+        scroller.scrollTop = 0;
+        for (let i = 0; i < 12 && HumanSimulator.userNodes().length <= before; i++) await sleep(250);
+        await sleep(300); // let the newly loaded turns finish rendering
+        scroller.scrollTop = scrollTop + (scroller.scrollHeight - scrollHeight);
+        turns = read();
+      }
+    }
+    return { success: true, turns, exhausted: turns.length <= have };
+  }
+
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'GET_DASHBOARD_STATE') {
+    if (request.action === 'GET_OLDER_HISTORY') {
+      getOlderHistory(Number(request.have) || 0)
+        .then(sendResponse, error => sendResponse({ success: false, error: error.message }));
+      return true;
+    } else if (request.action === 'GET_DASHBOARD_STATE') {
       queueManager.reportToRegistry().then(state => {
         sendResponse(state ? { success: true, state } : { success: false });
       });

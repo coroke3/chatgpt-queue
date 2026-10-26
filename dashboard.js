@@ -79,9 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const singleModelPopoverList = document.getElementById('single-model-popover-list');
 
   const singleEffortWrapper = document.getElementById('single-effort-wrapper');
-  const singleEffortPillBtn = document.getElementById('single-effort-pill-btn');
   const singleEffortPillLabel = document.getElementById('single-effort-pill-label');
-  const singleEffortPopover = document.getElementById('single-effort-popover');
   const singleEffortPopoverList = document.getElementById('single-effort-popover-list');
 
   const selectedModelOverride = {};  // tabId -> explicitly requested model or current setting
@@ -141,18 +139,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  if (singleEffortPillBtn) {
-    singleEffortPillBtn.onclick = (e) => {
-      e.stopPropagation();
-      const isOpen = singleEffortPopover && singleEffortPopover.style.display === 'block';
-      closeAllPopovers();
-      if (!isOpen && singleEffortPopover) {
-        singleEffortPopover.style.display = 'block';
-        singleEffortPillBtn.setAttribute('aria-expanded', 'true');
-      }
-    };
-  }
-
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.cgq-dropdown-wrapper')) {
       closeAllPopovers();
@@ -174,8 +160,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const snapshotAttempts = new Map();
   let activeFilter = 'all';
   let searchQuery = '';
+  const olderHistory = new Map(); // tabId -> { all, loading, exhaustedAt } (see loadOlderTurns)
+  let composerObserver = null; // ResizeObserver for floating composers (see observeComposer)
   let singleChatHistoryMode = 'all'; // 'all' | 'latest' (for single chat history view)
-  const cardHistoryExpanded = {}; // tabId -> boolean (whether past turns are expanded in grid card)
   const cardModelSelections = {}; // tabId -> { model, effort }
 
   // Grace Period & Stability Maps
@@ -255,6 +242,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // --------------------------------------------------------------------------
   // Markdown & Mermaid Diagram Setup
   // --------------------------------------------------------------------------
+  const CODE_LANGUAGE_NAMES = { js: 'JavaScript', javascript: 'JavaScript', jsx: 'JSX', ts: 'TypeScript', typescript: 'TypeScript',
+    tsx: 'TSX', py: 'Python', python: 'Python', sh: 'Bash', bash: 'Bash', shell: 'Shell', zsh: 'Zsh', json: 'JSON', html: 'HTML',
+    css: 'CSS', sql: 'SQL', md: 'Markdown', markdown: 'Markdown', yaml: 'YAML', yml: 'YAML', java: 'Java', go: 'Go', rust: 'Rust',
+    rb: 'Ruby', ruby: 'Ruby', php: 'PHP', swift: 'Swift', kotlin: 'Kotlin', c: 'C', cpp: 'C++', 'c++': 'C++', cs: 'C#', csharp: 'C#' };
+  const codeLanguageName = lang => CODE_LANGUAGE_NAMES[lang] || (lang ? lang[0].toUpperCase() + lang.slice(1) : 'Code');
+
   function setupMarkedRenderer() {
     if (!window.marked) return;
 
@@ -278,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </svg>
               ダイアグラム / 図形
             </span>
-            <button class="cgq-code-copy" data-target="raw-${id}">コードをコピー</button>
+            <button class="cgq-code-copy" data-target="raw-${id}" title="コードをコピー" aria-label="コードをコピー"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>
           </div>
           <div class="cgq-mermaid-svg-container" id="${id}">
             <div class="cgq-mermaid-loading">図形を描画中...</div>
@@ -305,10 +298,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const codeId = 'code-' + Math.random().toString(36).substring(2, 9);
+      // Header as on chatgpt.com: "</> JavaScript" and an icon copy button.
       return `<div class="cgq-code-block">
         <div class="cgq-code-header">
-          <span>${escapeHtml(lang || 'code')}</span>
-          <button class="cgq-code-copy" data-target="${codeId}">コピー</button>
+          <span class="cgq-code-lang"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>${escapeHtml(codeLanguageName(lang))}</span>
+          <button class="cgq-code-copy" data-target="${codeId}" title="コピー" aria-label="コピー"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>
         </div>
         <pre><code id="${codeId}">${escapeHtml(code)}</code></pre>
       </div>`;
@@ -431,8 +425,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // [slider id, setting key, default, value label id]
+  const DISPLAY_SLIDERS = [
+    ['setting-answer-size', 'answerFontSize', 14, 'setting-val-answer-size'],
+    ['setting-card-min-width', 'cardMinWidth', 280, 'setting-val-card-min']
+  ];
+
+  // Display settings from the sliders: answer text size (every turn scales from it, see .cgq-answer-card)
+  // and the minimum width of a parallel-view card (see .cgq-tabs-grid).
+  function applyDisplaySettings() {
+    const clamp = (value, min, max, fallback) => Math.min(max, Math.max(min, Number(value) || fallback));
+    const rootStyle = document.documentElement.style;
+    rootStyle.setProperty('--answer-size', String(clamp(currentSettings?.answerFontSize, 11, 20, 14)));
+    rootStyle.setProperty('--card-min-width', `${clamp(currentSettings?.cardMinWidth, 200, 800, 280)}px`);
+  }
+
   chrome.storage.local.get([STORAGE_KEY_SETTINGS], (res) => {
     currentSettings = res[STORAGE_KEY_SETTINGS] || {};
+    applyDisplaySettings();
     const pref = currentSettings.themeMode || 'auto';
     if (pref === 'dark') applyTheme(true);
     else if (pref === 'light') applyTheme(false);
@@ -640,6 +650,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ]);
       currentRegistry = result[STORAGE_KEY_REGISTRY] || {};
       currentSettings = result[STORAGE_KEY_SETTINGS] || {};
+      applyDisplaySettings();
       if (tabs) {
         openBrowserTabs = new Map(tabs.map(tab => [tab.id, tab]));
         for (const id of discoveredStates.keys()) if (!openBrowserTabs.has(id)) discoveredStates.delete(id);
@@ -1087,6 +1098,8 @@ document.addEventListener('DOMContentLoaded', () => {
     autoScroll: true,
     themeMode: 'auto',
     singleChatHistoryMode: 'all',
+    answerFontSize: 14,
+    cardMinWidth: 280,
   };
 
   let settingsInitialized = false;
@@ -1137,6 +1150,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (setScroll) setScroll.checked = s.autoScroll !== false;
     if (setTheme) setTheme.value = s.themeMode || 'auto';
     if (setHistory) setHistory.value = s.singleChatHistoryMode || singleChatHistoryMode || 'all';
+    for (const [id, key, fallback, label] of DISPLAY_SLIDERS) {
+      const slider = document.getElementById(id);
+      if (!slider) continue;
+      slider.value = s[key] || fallback;
+      document.getElementById(label).textContent = slider.value;
+    }
 
     if (!settingsInitialized) {
       settingsInitialized = true;
@@ -1197,6 +1216,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    applyDisplaySettings();
+
     if (newSettings.singleChatHistoryMode && newSettings.singleChatHistoryMode !== singleChatHistoryMode) {
       singleChatHistoryMode = newSettings.singleChatHistoryMode;
       delete singleAnswersArea.dataset.ansSig;
@@ -1208,6 +1229,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initSettingsEvents() {
+    for (const [id, key, , label] of DISPLAY_SLIDERS) {
+      const slider = document.getElementById(id);
+      slider?.addEventListener('input', () => {
+        document.getElementById(label).textContent = slider.value;
+        saveSettings({ [key]: parseFloat(slider.value) });
+      });
+    }
+
     const setSpeed = document.getElementById('setting-typing-speed');
     const valSpeed = document.getElementById('setting-val-speed');
     if (setSpeed && valSpeed) {
@@ -1356,7 +1385,7 @@ document.addEventListener('DOMContentLoaded', () => {
     singleChatStatus.className = `cgq-chat-status-pill ${dotClass}`;
     singleChatStatusText.textContent = statusLabel;
 
-    [singleChatInput, singleBtnSend, singleBtnPause, singleModelPillBtn, singleEffortPillBtn].forEach(el => {
+    [singleChatInput, singleBtnSend, singleBtnPause, singleModelPillBtn].forEach(el => {
       if (el) el.disabled = !!t.needsConnection;
     });
     if (!singleChatInput.dataset.defaultPlaceholder) singleChatInput.dataset.defaultPlaceholder = singleChatInput.placeholder;
@@ -1437,6 +1466,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateActivityBar(singleChatActivity, t);
 
     // 3. Answers Area
+    singleAnswersArea.dataset.platform = t.platform === 'gemini' ? 'gemini' : 'chatgpt';
     const ansSig = getAnswerSig(t);
     if (singleAnswersArea.dataset.ansSig !== ansSig) {
       const scrollEl = singleChatBody || singleAnswersArea;
@@ -1476,8 +1506,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (singleChatInput.dataset.activeTabId !== selectedTabId) {
       singleChatInput.dataset.activeTabId = selectedTabId;
       singleChatInput.value = tabInputDrafts.get(selectedTabId) || '';
-      singleChatInput.style.height = 'auto';
-      singleChatInput.style.height = Math.min(160, singleChatInput.scrollHeight) + 'px';
+      fitSingleInput();
     }
   }
 
@@ -1700,7 +1729,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 2. Reasoning Effort Handling
     if (singleEffortWrapper) {
       if (supportsEffort) {
-        singleEffortWrapper.style.display = 'inline-block';
+        singleEffortWrapper.style.display = 'block';
         if (singleEffortPillLabel) {
           singleEffortPillLabel.textContent = curEffortEntry.label;
         }
@@ -1709,50 +1738,13 @@ document.addEventListener('DOMContentLoaded', () => {
           singleEffortSelect.value = curEffortEntry.id;
         }
 
-        if (singleEffortPopoverList) {
-          singleEffortPopoverList.innerHTML = efforts.map(e => {
-            const isSelected = (e.id === curEffortEntry.id);
-            return `
-              <div class="cgq-popover-item ${isSelected ? 'selected' : ''}" data-effort-id="${e.id}">
-                <div class="cgq-popover-item-left">
-                  <span class="cgq-popover-item-icon">
-                    ${getEffortIconSvg(e.id)}
-                  </span>
-                  <div class="cgq-popover-item-content">
-                    <span class="cgq-popover-item-title">${escapeHtml(e.title || e.label)}</span>
-                    ${e.desc ? `<span class="cgq-popover-item-desc">${escapeHtml(e.desc)}</span>` : ''}
-                  </div>
-                </div>
-                ${isSelected ? `
-                  <div class="cgq-popover-item-check">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                      <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                  </div>
-                ` : ''}
-              </div>
-            `;
-          }).join('');
-
-          singleEffortPopoverList.querySelectorAll('.cgq-popover-item').forEach(item => {
-            item.onclick = (e) => {
-              e.stopPropagation();
-              const targetEffort = item.dataset.effortId;
-              selectedEffortOverride[t.tabId] = targetEffort;
-              cardModelSelections[t.tabId] = {
-                model: selectedModelOverride[t.tabId] || t.model || 'auto',
-                effort: targetEffort
-              };
-              if (singleEffortSelect) singleEffortSelect.value = targetEffort;
-              sendRemoteCommand(t.tabId, { action: 'SWITCH_EFFORT', effort: targetEffort });
-              showToast(`思考レベルを ${item.querySelector('.cgq-popover-item-title')?.textContent || targetEffort} に設定しました`);
-              closeAllPopovers();
-              updateDashboard();
-            };
-          });
-        }
+        renderEffortSlider(singleEffortPopoverList, t, efforts, curEffortEntry, () => {
+          if (singleEffortSelect) singleEffortSelect.value = selectedEffortOverride[t.tabId];
+          updateDashboard();
+        });
       } else {
         singleEffortWrapper.style.display = 'none';
+        if (singleEffortPillLabel) singleEffortPillLabel.textContent = '';
       }
     }
   }
@@ -1823,48 +1815,142 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function getUnifiedTurns(t) {
-    const recentQA = Array.isArray(t.recentQA) ? [...t.recentQA] : [];
-    const latestAns = t.latestAnswer;
+  // --------------------------------------------------------------------------
+  // Older history: scrolling to the top first reveals turns already held (「最新のみ」 / collapsed
+  // card), then asks the tab for every turn it has and prepends the ones before the heartbeat window.
+  // --------------------------------------------------------------------------
+  const turnKey = qa => `${String(qa.prompt || '').trim().slice(0, 200)}\u0001${String(qa.answer || '').trim().slice(0, 200)}`;
 
-    if (latestAns && (latestAns.text || latestAns.isStreaming || latestAns.userPrompt)) {
-      const lastQ = recentQA.length > 0 ? recentQA[recentQA.length - 1] : null;
-      if (!lastQ) {
-        recentQA.push({
-          turn: 1,
-          prompt: latestAns.userPrompt || '',
-          answer: latestAns.text || '',
-          isStreaming: latestAns.isStreaming || false,
-          timestamp: latestAns.timestamp || Date.now()
-        });
-      } else {
-        const isSameTurn =
-          (latestAns.userPrompt && lastQ.prompt === latestAns.userPrompt) ||
-          (latestAns.text && lastQ.answer === latestAns.text) ||
-          (!lastQ.prompt && latestAns.userPrompt && !lastQ.answer) ||
-          (lastQ.isStreaming && !latestAns.userPrompt);
+  function olderTurnsBefore(t) {
+    const all = olderHistory.get(t.tabId)?.all;
+    const recent = Array.isArray(t.recentQA) ? t.recentQA : [];
+    if (!all?.length) return [];
+    if (!recent.length) return all.map(qa => ({ ...qa }));
+    const first = turnKey(recent[0]);
+    let idx = all.findIndex(qa => turnKey(qa) === first);
+    if (idx < 0) idx = all.findIndex(qa => String(qa.prompt || '').trim() === String(recent[0].prompt || '').trim());
+    if (idx >= 0) return all.slice(0, idx).map(qa => ({ ...qa }));
+    const known = new Set(recent.map(turnKey));
+    return all.filter(qa => !known.has(turnKey(qa))).map(qa => ({ ...qa }));
+  }
 
-        if (isSameTurn) {
-          if (latestAns.text) lastQ.answer = latestAns.text;
-          if (latestAns.userPrompt) lastQ.prompt = latestAns.userPrompt;
-          lastQ.isStreaming = latestAns.isStreaming || false;
-        } else {
-          recentQA.push({
-            turn: recentQA.length + 1,
-            prompt: latestAns.userPrompt || '',
-            answer: latestAns.text || '',
-            isStreaming: latestAns.isStreaming || false,
-            timestamp: latestAns.timestamp || Date.now()
-          });
-        }
-      }
+  // Run a re-render while keeping the visible content where it is (content is added above it).
+  function keepScroll(el, render) {
+    const height = el.scrollHeight;
+    const top = el.scrollTop;
+    render();
+    el.scrollTop = el.scrollHeight - height + top;
+  }
+
+  function rerenderTurns(kind, tabId) {
+    const t = cachedTabsData.get(tabId);
+    if (!t) return;
+    if (kind === 'single') {
+      if (tabId !== selectedTabId) return;
+      delete singleAnswersArea.dataset.ansSig;
+      renderSingleChatView();
+    } else {
+      const card = document.getElementById(`card-${tabId}`);
+      if (!card) return;
+      delete card.dataset.answerSig;
+      updateExistingCard(card, t, Date.now());
+    }
+  }
+
+  function loadOlderTurns(scrollEl, indicatorEl, tabId, kind) {
+    const t = cachedTabsData.get(tabId);
+    if (!t || t.needsConnection || !t.chromeTabId) return;
+    const state = olderHistory.get(tabId) || {};
+    olderHistory.set(tabId, state);
+    if (state.loading || (state.exhaustedAt && Date.now() - state.exhaustedAt < 15000)) return;
+
+    const turns = getUnifiedTurns(t);
+    if (kind === 'single' && turns.length > 1 && singleChatHistoryMode === 'latest') {
+      keepScroll(scrollEl, () => {
+        singleChatHistoryMode = 'all';
+        rerenderTurns(kind, tabId);
+      });
+      return;
     }
 
-    recentQA.forEach((qa, idx) => {
-      qa.turn = idx + 1;
-    });
+    state.loading = true;
+    indicatorEl.classList.add('cgq-loading-older');
+    const done = response => {
+      clearTimeout(timer);
+      if (!state.loading) return;
+      state.loading = false;
+      indicatorEl.classList.remove('cgq-loading-older');
+      if (!response?.success) return;
+      const before = getUnifiedTurns(cachedTabsData.get(tabId) || t).length;
+      state.all = response.turns || [];
+      const after = getUnifiedTurns(cachedTabsData.get(tabId) || t).length;
+      if (after <= before) {
+        state.exhaustedAt = Date.now();
+        return;
+      }
+      keepScroll(scrollEl, () => rerenderTurns(kind, tabId));
+    };
+    const timer = setTimeout(() => done(null), 8000);
+    try {
+      chrome.tabs.sendMessage(t.chromeTabId, { action: 'GET_OLDER_HISTORY', have: turns.length }, response => {
+        done(chrome.runtime.lastError ? null : response);
+      });
+    } catch {
+      done(null);
+    }
+  }
 
-    return recentQA;
+  function bindOlderTurns(scrollEl, indicatorEl, getTabId, kind) {
+    if (!scrollEl || scrollEl.dataset.olderBound) return;
+    scrollEl.dataset.olderBound = '1';
+    const load = () => { const tabId = getTabId(); if (tabId) loadOlderTurns(scrollEl, indicatorEl, tabId, kind); };
+    scrollEl.addEventListener('scroll', () => { if (scrollEl.scrollTop <= 80) load(); }, { passive: true });
+    // Content that does not fill the view never scrolls: an upward wheel at the top asks too.
+    scrollEl.addEventListener('wheel', e => { if (e.deltaY < 0 && scrollEl.scrollTop <= 0) load(); }, { passive: true });
+  }
+
+  // The tab reports its turns and, separately, the latest answer; the same turn can arrive twice with small
+  // differences (another root element, whitespace, sources added later). Compare by the prompt, or by the
+  // start of the answer when a prompt is missing.
+  const turnText = value => String(value || '').replace(/[\s*_`#>|\-]+/g, ' ').trim();
+  function sameTurn(a, b) {
+    const pa = turnText(a?.prompt), pb = turnText(b?.prompt);
+    if (pa && pb) return pa === pb && (!a.answer || !b.answer || turnText(a.answer).slice(0, 120) === turnText(b.answer).slice(0, 120) ||
+      turnText(a.answer).startsWith(turnText(b.answer).slice(0, 60)) || turnText(b.answer).startsWith(turnText(a.answer).slice(0, 60)));
+    const aa = turnText(a?.answer).slice(0, 120), ab = turnText(b?.answer).slice(0, 120);
+    return !!aa && aa === ab;
+  }
+
+  function getUnifiedTurns(t) {
+    const turns = [...olderTurnsBefore(t), ...(Array.isArray(t.recentQA) ? t.recentQA : [])].map(qa => ({ ...qa }));
+    const latestAns = t.latestAnswer;
+    if (latestAns && (latestAns.text || latestAns.isStreaming || latestAns.userPrompt)) {
+      const latest = { prompt: latestAns.userPrompt || '', answer: latestAns.text || '', isStreaming: latestAns.isStreaming || false,
+        progress: latestAns.progress || null, thinking: latestAns.progress?.thinking || undefined,
+        timestamp: latestAns.timestamp || Date.now() };
+      const last = turns[turns.length - 1];
+      // latestAnswer always describes the page's last turn: the same prompt is the same turn.
+      const isSameTurn = last && (sameTurn(last, latest) || (!!latest.prompt && turnText(last.prompt) === turnText(latest.prompt)) ||
+        (!last.prompt && latest.prompt && !last.answer) || (last.isStreaming && !latest.prompt));
+      if (isSameTurn) {
+        if (latest.answer) last.answer = latest.answer;
+        if (latest.prompt) last.prompt = latest.prompt;
+        last.isStreaming = latest.isStreaming;
+        last.progress = latest.progress;
+        if (latest.progress?.thinking) last.thinking = latest.progress.thinking;
+      } else {
+        turns.push(latest);
+      }
+    }
+    // Collapse a turn repeated back to back (keep the later, fuller reading).
+    const unique = turns.reduce((out, qa) => {
+      const prev = out[out.length - 1];
+      if (prev && sameTurn(prev, qa)) out[out.length - 1] = { ...prev, ...qa, prompt: qa.prompt || prev.prompt, answer: qa.answer || prev.answer };
+      else out.push(qa);
+      return out;
+    }, []);
+    unique.forEach((qa, idx) => { qa.turn = idx + 1; });
+    return unique;
   }
 
   function buildSingleAnswersHtml(t) {
@@ -1885,83 +1971,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let html = '';
 
-    // History thread header
-    if (turns.length > 1) {
-      html += `
-        <div class="cgq-answers-thread-header">
-          <div class="cgq-thread-header-title">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-            <span>会話履歴</span>
-            <span class="cgq-thread-count-badge">全 ${turns.length} 件</span>
-          </div>
-          <div class="cgq-thread-toggle-group">
-            <button class="cgq-thread-toggle-btn ${singleChatHistoryMode === 'all' ? 'active' : ''}" data-history-mode="all">すべての履歴</button>
-            <button class="cgq-thread-toggle-btn ${singleChatHistoryMode === 'latest' ? 'active' : ''}" data-history-mode="latest">最新のみ</button>
-          </div>
-        </div>
-      `;
-    }
-
-    const displayTurns = (singleChatHistoryMode === 'latest' && turns.length > 1)
-      ? [turns[turns.length - 1]]
-      : turns;
-
-    displayTurns.forEach((qa, idx) => {
-      const actualIndex = turns.indexOf(qa);
-      const isLatest = (actualIndex === turns.length - 1);
-      const turnNum = actualIndex + 1;
-
-      html += `
-        <div class="cgq-answer-card ${!isLatest ? 'is-past-turn' : ''}" id="turn-card-${turnNum}">
-          <div class="cgq-turn-header">
-            <span class="cgq-turn-badge ${isLatest ? 'latest' : ''}">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="9 11 12 14 22 4"></polyline>
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-              </svg>
-              <span>${isLatest ? `最新のやり取り (#${turnNum})` : `やり取り #${turnNum}`}</span>
-            </span>
-            <div class="cgq-turn-actions">
-              <button class="cgq-turn-btn btn-copy-turn" data-text="${escapeHtml(qa.answer || '')}" title="この回答をコピー">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-                <span>コピー</span>
-              </button>
-            </div>
-          </div>
-
-          ${qa.prompt ? `
-            <div class="cgq-user-prompt-row">
-              <div class="cgq-user-prompt-bubble" title="送信したプロンプト">${escapeHtml(qa.prompt)}</div>
-            </div>
-          ` : ''}
-
-          <div class="cgq-answer-markdown">
-            ${qa.answer ? formatMarkdown(qa.answer) : (qa.isStreaming || (isLatest && (t.currentState === 'answering' || t.currentState === 'waiting_generation' || t.currentState === 'typing')) ? '<em>（回答を生成しています...）</em>' : '<em>（回答なし）</em>')}
-          </div>
-        </div>
-      `;
-    });
+    const displayTurns = (singleChatHistoryMode === 'latest' && turns.length > 1) ? turns.slice(-1) : turns;
+    displayTurns.forEach(qa => { html += buildTurnHtml(qa, t, qa === turns[turns.length - 1], 'single'); });
 
     return html;
   }
 
   function bindSingleAnswersEvents() {
-    singleAnswersArea.querySelectorAll('.cgq-thread-toggle-btn').forEach(btn => {
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        const mode = btn.dataset.historyMode;
-        if (mode && mode !== singleChatHistoryMode) {
-          singleChatHistoryMode = mode;
-          delete singleAnswersArea.dataset.ansSig;
-          renderSingleChatView();
-        }
-      };
-    });
     bindTurnCopyButtons(singleAnswersArea);
   }
 
@@ -1988,7 +2004,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => singleBtnSend.classList.remove('sent'), 350);
       }
       singleChatInput.value = '';
-      singleChatInput.style.height = 'auto';
+      fitSingleInput();
       tabInputDrafts.delete(selectedTabId);
       singleToolInput.clear();
       showToast('キューに追加しました');
@@ -2009,9 +2025,33 @@ document.addEventListener('DOMContentLoaded', () => {
     if (selectedTabId) {
       tabInputDrafts.set(selectedTabId, singleChatInput.value);
     }
-    singleChatInput.style.height = 'auto';
-    singleChatInput.style.height = Math.min(160, singleChatInput.scrollHeight) + 'px';
+    fitSingleInput();
   });
+
+  // Composers float over their answers (position: absolute); the answers end with a spacer of the
+  // composer's height (--composer-h, set on the composer's parent) so the last turn can scroll clear of it.
+  function observeComposer(el) {
+    if (!el || !window.ResizeObserver) return;
+    composerObserver ||= new ResizeObserver(entries => {
+      for (const { target } of entries) {
+        target.parentElement?.style.setProperty('--composer-h', `${target.offsetHeight}px`);
+      }
+    });
+    composerObserver.observe(el);
+  }
+
+  // Empty inputs stay one line (the placeholder is not measured); typed text grows up to max.
+  function fitInput(el, max) {
+    el.style.height = '';
+    if (el.value) el.style.height = Math.min(max, el.scrollHeight) + 'px';
+  }
+
+  function fitSingleInput() {
+    fitInput(singleChatInput, 160);
+  }
+
+  observeComposer(document.querySelector('#view-single-chat .cgq-chat-composer-container'));
+  bindOlderTurns(singleChatBody, singleAnswersArea, () => selectedTabId, 'single');
 
   singleChatInput.addEventListener('compositionstart', () => {
     isSingleComposing = true;
@@ -2054,37 +2094,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const now = Date.now();
     const count = tabs.length;
 
-    // Full screen width & height dynamic partitioning
-    // 1 tab: 100% width, 100% height
-    // 2 tabs: 50% width each, 100% height
-    // 3 tabs: 33.3% width each, 100% height
-    // 4 tabs: 25% width each, 100% height
-    // 5+ tabs: min 280px columns with horizontal scroll, 100% height
-    tabsGrid.style.gridAutoFlow = 'column';
-    tabsGrid.style.gridTemplateRows = '100%';
-    tabsGrid.style.height = '100%';
-
-    if (count <= 1) {
-      tabsGrid.style.gridTemplateColumns = 'minmax(0, 1fr)';
-      tabsGrid.dataset.count = '1';
-      delete tabsGrid.dataset.countMany;
-    } else if (count === 2) {
-      tabsGrid.style.gridTemplateColumns = 'minmax(0, 1fr) minmax(0, 1fr)';
-      tabsGrid.dataset.count = '2';
-      delete tabsGrid.dataset.countMany;
-    } else if (count === 3) {
-      tabsGrid.style.gridTemplateColumns = 'repeat(3, minmax(0, 1fr))';
-      tabsGrid.dataset.count = '3';
-      delete tabsGrid.dataset.countMany;
-    } else if (count === 4) {
-      tabsGrid.style.gridTemplateColumns = 'repeat(4, minmax(0, 1fr))';
-      tabsGrid.dataset.count = '4';
-      delete tabsGrid.dataset.countMany;
-    } else {
-      tabsGrid.style.gridTemplateColumns = `repeat(${count}, minmax(min(280px, 100%), 1fr))`;
-      delete tabsGrid.dataset.count;
-      tabsGrid.dataset.countMany = 'true';
-    }
+    // Column widths come from CSS (.cgq-tabs-grid: equal share, --card-min-width minimum).
 
     const existingCards = {};
     tabsGrid.querySelectorAll('.cgq-tab-card').forEach(card => {
@@ -2132,7 +2142,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateCardConnection(card, t) {
     const tabId = t.tabId;
-    card.querySelectorAll('.cgq-dash-prompt-input, .btn-add-prompt, .btn-toggle-pause, .btn-clear-queue, .card-model-pill, .card-effort-pill')
+    card.querySelectorAll('.cgq-dash-prompt-input, .btn-add-prompt, .btn-toggle-pause, .btn-clear-queue, .card-model-pill')
       .forEach(el => { el.disabled = !!t.needsConnection; });
     const input = card.querySelector('.cgq-dash-prompt-input');
     let toolInput = cardToolInputs.get(card);
@@ -2145,7 +2155,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (toolInput) {
       toolInput.sync();
     }
-    if (input) input.placeholder = t.needsConnection ? '対象タブを再読み込みして接続してください' : 'このタブのキューに追加 (Enterで追加)...';
+    if (input) input.placeholder = t.needsConnection ? '対象タブを再読み込みして接続してください' : 'キューに追加 (Enter)';
   }
 
   function createCardElement(t, now) {
@@ -2153,6 +2163,7 @@ document.addEventListener('DOMContentLoaded', () => {
     card.className = 'cgq-tab-card';
     card.id = `card-${t.tabId}`;
     card.dataset.tabId = t.tabId;
+    card.dataset.platform = t.platform === 'gemini' ? 'gemini' : 'chatgpt';
 
     const items = Array.isArray(t.items) ? t.items : [];
     const { dotClass, statusLabel, isStreaming } = getStatusInfo(t);
@@ -2222,19 +2233,24 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="cgq-tab-card-footer">
         <div class="cgq-card-queue-slot">${buildQueueHtml(t)}</div>
         <div class="cgq-dash-input-row">
-          <textarea class="cgq-dash-prompt-input" data-tab-id="${t.tabId}" placeholder="このタブのキューに追加 (Enterで追加)..." rows="1">${escapeHtml(tabInputDrafts.get(t.tabId) || '')}</textarea>
+          <textarea class="cgq-dash-prompt-input" data-tab-id="${t.tabId}" placeholder="キューに追加 (Enter)" rows="1">${escapeHtml(tabInputDrafts.get(t.tabId) || '')}</textarea>
           <div class="cgq-composer-actions">
             <div class="cgq-card-composer-toolbar">
               <div class="cgq-dropdown-wrapper">
-                <button type="button" class="cgq-chatgpt-pill-btn sm card-model-pill" data-tab-id="${t.tabId}" aria-haspopup="menu" aria-expanded="false" title="モデルを選択">
+                <button type="button" class="cgq-chatgpt-pill-btn sm card-model-pill" data-tab-id="${t.tabId}" aria-haspopup="menu" aria-expanded="false" title="モデルと思考レベルを選択">
                   <span class="cgq-pill-icon-box">${getModelIconSvg(activeModelId)}</span>
                   <span class="cgq-pill-label card-model-label">${escapeHtml(curModelEntry.label)}</span>
+                  <span class="cgq-pill-label cgq-pill-sub card-effort-label">${supportsEffort ? escapeHtml(curEffortEntry.label) : ''}</span>
                   <svg class="cgq-pill-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <polyline points="6 9 12 15 18 9"></polyline>
                   </svg>
                 </button>
                 <div class="cgq-chatgpt-popover card-model-popover" style="display: none;">
-                  <div class="cgq-popover-header">モデルを選択</div>
+                  <div class="cgq-popover-section card-effort-wrapper" style="display: ${supportsEffort ? 'block' : 'none'};">
+                    <div class="cgq-popover-header">思考レベル</div>
+                    <div class="card-effort-popover-list"></div>
+                  </div>
+                  <div class="cgq-popover-header">モデル</div>
                   <div class="cgq-popover-list card-model-popover-list">
                     ${models.map(m => `
                       <div class="cgq-popover-item ${m.id === curModelEntry.id ? 'selected' : ''}" data-model-id="${escapeHtml(m.id)}" aria-disabled="${modelRequests.has(t.tabId)}">
@@ -2261,40 +2277,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
               </div>
 
-              <div class="cgq-dropdown-wrapper card-effort-wrapper" style="display: ${supportsEffort ? 'inline-block' : 'none'};">
-                <button type="button" class="cgq-chatgpt-pill-btn sm effort card-effort-pill" data-tab-id="${t.tabId}" aria-haspopup="menu" aria-expanded="false" title="思考レベル (推論エフォート) を選択">
-                  <span class="cgq-pill-icon-box">${getEffortIconSvg(curEffortEntry.id)}</span>
-                  <span class="cgq-pill-label card-effort-label">${escapeHtml(curEffortEntry.label)}</span>
-                  <svg class="cgq-pill-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </button>
-                <div class="cgq-chatgpt-popover card-effort-popover" style="display: none;">
-                  <div class="cgq-popover-header">思考レベル / 思考の深さ</div>
-                  <div class="cgq-popover-list card-effort-popover-list">
-                    ${efforts.map(e => `
-                      <div class="cgq-popover-item ${e.id === curEffortEntry.id ? 'selected' : ''}" data-effort-id="${e.id}">
-                        <div class="cgq-popover-item-left">
-                          <span class="cgq-popover-item-icon">${getEffortIconSvg(e.id)}</span>
-                          <div class="cgq-popover-item-content">
-                            <span class="cgq-popover-item-title">${escapeHtml(e.title || e.label)}</span>
-                            ${e.desc ? `<span class="cgq-popover-item-desc">${escapeHtml(e.desc)}</span>` : ''}
-                          </div>
-                        </div>
-                        ${e.id === curEffortEntry.id ? `
-                          <div class="cgq-popover-item-check">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                              <polyline points="20 6 9 17 4 12"></polyline>
-                            </svg>
-                          </div>
-                        ` : ''}
-                      </div>
-                    `).join('')}
-                  </div>
-                </div>
-
-                <!-- Card Bulk Add Button (1 prompt per line) -->
-                <button type="button" class="cgq-chatgpt-pill-btn sm card-bulk-add-btn" data-tab-id="${t.tabId}" title="プロンプトを一括追加 (1行1プロンプト)">
+              <!-- Card Bulk Add Button (1 prompt per line) -->
+              <button type="button" class="cgq-chatgpt-pill-btn sm cgq-icon-only card-bulk-add-btn" data-tab-id="${t.tabId}" title="プロンプトを一括追加 (1行1プロンプト)" aria-label="プロンプトを一括追加">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <line x1="8" y1="6" x2="21" y2="6"></line>
                     <line x1="8" y1="12" x2="21" y2="12"></line>
@@ -2303,9 +2287,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <line x1="3" y1="12" x2="3.01" y2="12"></line>
                     <line x1="3" y1="18" x2="3.01" y2="18"></line>
                   </svg>
-                  <span class="cgq-pill-label">一括</span>
                 </button>
-              </div>
             </div>
             <button class="btn-add-prompt" title="このタブのキューに追加 (Enter)">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -2350,6 +2332,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     updateCardConnection(card, t);
+    observeComposer(card.querySelector('.cgq-tab-card-footer'));
+    const resultsView = card.querySelector('.cgq-tab-view[data-view="results"]');
+    bindOlderTurns(resultsView, resultsView, () => t.tabId, 'card');
     return card;
   }
 
@@ -2405,15 +2390,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const cardEffortWrapper = card.querySelector('.card-effort-wrapper');
       if (cardEffortWrapper) {
-        cardEffortWrapper.style.display = supportsEffort ? 'inline-block' : 'none';
+        cardEffortWrapper.style.display = supportsEffort ? 'block' : 'none';
       }
       const cardEffortLabel = card.querySelector('.card-effort-label');
       if (cardEffortLabel) {
-        cardEffortLabel.textContent = curEffortEntry.label;
-      }
-      const cardEffortIconBox = card.querySelector('.card-effort-pill .cgq-pill-icon-box');
-      if (cardEffortIconBox) {
-        cardEffortIconBox.innerHTML = getEffortIconSvg(curEffortEntry.id);
+        cardEffortLabel.textContent = supportsEffort ? curEffortEntry.label : '';
       }
     }
 
@@ -2513,7 +2494,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </svg>
             ダイアグラム / 図形
           </span>
-          <button class="cgq-code-copy" data-target="raw-${id}">コードをコピー</button>
+          <button class="cgq-code-copy" data-target="raw-${id}" title="コードをコピー" aria-label="コードをコピー"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>
         </div>
         <div class="cgq-mermaid-svg-container" id="${id}">
           <div class="cgq-mermaid-loading">図形を描画中...</div>
@@ -2578,83 +2559,86 @@ document.addEventListener('DOMContentLoaded', () => {
   function buildResultsHtml(t) {
     if (t.needsConnection) return connectionHelp(t);
     const turns = getUnifiedTurns(t);
-    const tid = t.tabId;
-    const isExpanded = !!cardHistoryExpanded[tid];
-
-    if (turns.length === 0) {
-      return `<div style="padding: 30px 10px; text-align: center; color: var(--text-muted); font-size: 12.5px;">まだ回答がありません</div>`;
-    }
-
-    let html = '';
-
-    // If multiple turns, show the history bar & toggle pills
-    if (turns.length > 1) {
-      html += `
-        <div class="cgq-grid-history-bar">
-          <div class="cgq-grid-history-title">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-            <span>会話履歴 (${turns.length}件)</span>
-          </div>
-          <div class="cgq-grid-history-toggles">
-            <button class="cgq-grid-history-btn ${!isExpanded ? 'active' : ''}" data-action="toggle-card-history" data-tab-id="${tid}" data-expand="false">最新のみ</button>
-            <button class="cgq-grid-history-btn ${isExpanded ? 'active' : ''}" data-action="toggle-card-history" data-tab-id="${tid}" data-expand="true">全履歴</button>
-          </div>
-        </div>
-      `;
-
-      if (!isExpanded) {
-        html += `
-          <button class="cgq-history-expand-banner" data-action="toggle-card-history" data-tab-id="${tid}" data-expand="true">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-            <span>過去のやり取り (${turns.length - 1}件) を展開</span>
-          </button>
-        `;
-      }
-    }
-
-    const displayTurns = (isExpanded || turns.length === 1) ? turns : [turns[turns.length - 1]];
-
-    displayTurns.forEach((qa, idx) => {
-      const actualIndex = turns.indexOf(qa);
-      const isLatest = (actualIndex === turns.length - 1);
-      const turnNum = actualIndex + 1;
-
-      html += `
-        <div class="cgq-grid-turn-item ${!isLatest ? 'past' : ''}">
-          <div class="cgq-turn-header" style="margin-bottom: 4px;">
-            <span class="cgq-turn-badge ${isLatest ? 'latest' : ''}">
-              ${isLatest ? `最新 (#${turnNum})` : `#${turnNum}`}
-            </span>
-            <div class="cgq-turn-actions">
-              <button class="cgq-turn-btn btn-copy-turn" data-text="${escapeHtml(qa.answer || '')}" title="この回答をコピー">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-                <span>コピー</span>
-              </button>
-            </div>
-          </div>
-
-          ${qa.prompt ? `
-            <div class="cgq-user-prompt-row card-mode">
-              <div class="cgq-user-prompt-bubble card-mode" title="送信したプロンプト">${escapeHtml(qa.prompt)}</div>
-            </div>
-          ` : ''}
-
-          <div class="cgq-answer-markdown" style="font-size: 12.5px; line-height: 1.5; color: var(--text);">
-            ${qa.answer ? formatMarkdown(qa.answer) : (qa.isStreaming || (isLatest && (t.currentState === 'answering' || t.currentState === 'waiting_generation' || t.currentState === 'typing')) ? '<em>（回答を生成しています...）</em>' : '<em>（回答なし）</em>')}
-          </div>
-        </div>
-      `;
-    });
-
-    return html;
+    if (turns.length === 0) return '<div class="cgq-empty-turns">まだ回答がありません</div>';
+    return turns.map(qa => buildTurnHtml(qa, t, qa === turns[turns.length - 1], 'card')).join('');
   }
+
+  // ChatGPT's activity block (measured 2026-10): a header line that shimmers while it works
+  // (「思考中」 / 「3件のサイトを検索中」, later 「1m 27s考えました」), a chevron that opens the log of
+  // step titles and notes, and 「スキップ」 while it is still thinking. Opening and closing follows the
+  // page until the viewer toggles it here; new log lines and a changed label animate in once.
+  const activityOpen = new Map();
+  const activitySeen = new Set();
+  const activityLabels = new Map();
+  function buildActivityBlock(qa, t, pending) {
+    const th = qa.thinking;
+    if (!th || (!th.label && !th.log?.length)) return '';
+    const key = `${t.tabId}|${turnText(qa.prompt).slice(0, 60)}`;
+    const active = pending && th.active;
+    const open = activityOpen.has(key) ? activityOpen.get(key) : !!th.expanded;
+    const changed = activityLabels.has(key) && activityLabels.get(key) !== th.label;
+    activityLabels.set(key, th.label);
+    const log = (th.log || []).map((entry, i) => {
+      const id = `${key}|${i}|${entry.text.slice(0, 24)}`;
+      const fresh = !activitySeen.has(id);
+      activitySeen.add(id);
+      return entry.kind === 'step'
+        ? `<div class="cgq-activity-step${fresh ? ' is-new' : ''}">${escapeHtml(entry.text)}</div>`
+        : `<div class="cgq-activity-note cgq-answer-markdown${fresh ? ' is-new' : ''}">${formatMarkdown(entry.text)}</div>`;
+    }).join('');
+    return `
+      <div class="cgq-activity${open ? ' is-open' : ''}${active ? ' is-active' : ''}" data-activity-key="${escapeHtml(key)}">
+        <div class="cgq-activity-row">
+          <button type="button" class="cgq-activity-header" aria-expanded="${open}">
+            <span class="cgq-activity-label${changed ? ' is-changed' : ''}" data-text="${escapeHtml(th.label)}">${escapeHtml(th.label)}</span>
+            <svg class="cgq-activity-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          ${active && th.canSkip ? `<button type="button" class="cgq-activity-skip" data-tab-id="${escapeHtml(String(t.tabId))}">スキップ</button>` : ''}
+        </div>
+        ${log ? `<div class="cgq-activity-body"><div class="cgq-activity-inner">${log}</div></div>` : ''}
+      </div>`;
+  }
+
+  document.addEventListener('click', e => {
+    const header = e.target.closest('.cgq-activity-header');
+    if (header) {
+      const block = header.closest('.cgq-activity');
+      const open = !block.classList.contains('is-open');
+      block.classList.toggle('is-open', open);
+      header.setAttribute('aria-expanded', String(open));
+      activityOpen.set(block.dataset.activityKey, open);
+      return;
+    }
+    const skip = e.target.closest('.cgq-activity-skip');
+    if (skip && sendRemoteCommand(skip.dataset.tabId, { action: 'SKIP_THINKING' })) skip.disabled = true;
+  });
+
+  // One turn, laid out like ChatGPT / Gemini: the prompt bubble, the answer, its choices and a copy
+  // action under the answer. Nothing else (no turn badges or history bars).
+  function buildTurnHtml(qa, t, isLatest, kind) {
+    const card = kind === 'card';
+    const pending = qa.isStreaming || (isLatest && ['answering', 'waiting_generation', 'typing'].includes(t.currentState));
+    return `
+      <div class="${card ? 'cgq-grid-turn-item' : 'cgq-answer-card'}">
+        ${qa.prompt ? `
+          <div class="cgq-user-prompt-row${card ? ' card-mode' : ''}">
+            <div class="cgq-user-prompt-bubble${card ? ' card-mode' : ''}">${escapeHtml(qa.prompt)}</div>
+          </div>` : ''}
+        ${buildActivityBlock(qa, t, pending)}
+        <div class="cgq-answer-markdown">
+          ${qa.answer ? formatMarkdown(qa.answer) : qa.thinking ? '' : pending ? '<span class="cgq-busy-dot" role="status" aria-label="応答中"></span>' : '<p class="cgq-answer-pending">（回答なし）</p>'}
+        </div>
+        ${pending && qa.progress?.notice ? `<div class="cgq-thinking-notice">${escapeHtml(qa.progress.notice)}</div>` : ''}
+        ${buildChoicesHtml(qa, t)}
+        ${qa.answer && !qa.isStreaming ? `
+          <div class="cgq-turn-actions">
+            <button class="cgq-turn-btn btn-copy-turn" data-text="${escapeHtml(qa.answer)}" title="コピー" aria-label="コピー">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+          </div>` : ''}
+      </div>`;
+  }
+
 
   function buildQueueHtml(t) {
     const items = Array.isArray(t.items) ? t.items : [];
@@ -2700,21 +2684,22 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${subtext}::${items.length}::${itemsSig}`;
   }
 
+  const choiceSig = qa => (qa.choices || []).map(g => `${g.key}${g.done ? '#' : ''}${g.options.findIndex(o => o.checked)}`).join(',');
+
   function getAnswerSig(t) {
     const turns = getUnifiedTurns(t);
     const a = t.latestAnswer || {};
-    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}`).join('|');
+    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}:${choiceSig(tr)}:${tr.thinking?.label || ''}:${tr.thinking?.log?.length || 0}:${tr.thinking?.active ? 1 : 0}:${tr.thinking?.expanded ? 1 : 0}`).join('|');
     const last = turns.length > 0 ? turns[turns.length - 1] : {};
-    return `${t.tabId}::${!!t.needsConnection}::${turns.length}::${singleChatHistoryMode}::${a.isStreaming ? '1' : '0'}::${turnSummary}::${last.answer || ''}::${last.prompt || ''}`;
+    return `${t.tabId}::${!!t.needsConnection}::${turns.length}::${singleChatHistoryMode}::${a.isStreaming ? '1' : '0'}::${turnSummary}::${last.answer || ''}::${last.prompt || ''}::${last.progress?.label || ''}|${last.progress?.notice || ''}`;
   }
 
   function getCardAnswerSig(t) {
     const turns = getUnifiedTurns(t);
-    const isExpanded = !!cardHistoryExpanded[t.tabId];
     const a = t.latestAnswer || {};
-    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}`).join('|');
+    const turnSummary = turns.map(tr => `${tr.turn}:${tr.prompt?.length || 0}:${tr.answer?.length || 0}:${tr.isStreaming ? 1 : 0}:${choiceSig(tr)}:${tr.thinking?.label || ''}:${tr.thinking?.log?.length || 0}:${tr.thinking?.active ? 1 : 0}:${tr.thinking?.expanded ? 1 : 0}`).join('|');
     const last = turns.length > 0 ? turns[turns.length - 1] : {};
-    return `${t.tabId}::${!!t.needsConnection}::${turns.length}::${isExpanded ? '1' : '0'}::${a.isStreaming ? '1' : '0'}::${turnSummary}::${last.answer || ''}::${last.prompt || ''}`;
+    return `${t.tabId}::${!!t.needsConnection}::${turns.length}::${a.isStreaming ? '1' : '0'}::${turnSummary}::${last.answer || ''}::${last.prompt || ''}::${last.progress?.label || ''}|${last.progress?.notice || ''}`;
   }
 
   function bindCodeBlockCopy(container) {
@@ -2727,9 +2712,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const codeEl = container.querySelector('#' + targetId) || document.getElementById(targetId);
         if (codeEl) {
           navigator.clipboard?.writeText(codeEl.innerText || codeEl.textContent || '');
-          const orig = btn.textContent;
-          btn.textContent = 'コピー完了';
-          setTimeout(() => { btn.textContent = orig; }, 2000);
+          btn.classList.add('copied');
+          setTimeout(() => btn.classList.remove('copied'), 2000);
         }
       };
     });
@@ -2761,19 +2745,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function bindGridHistoryEvents(card, tabId) {
-    if (!card) return;
-    card.querySelectorAll('[data-action="toggle-card-history"]').forEach(btn => {
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        cardHistoryExpanded[tabId] = (btn.dataset.expand === 'true');
-        delete card.dataset.answerSig;
-        const t = cachedTabsData.get(tabId);
-        if (t) updateExistingCard(card, t, Date.now());
-      };
-    });
+  function bindGridHistoryEvents(card) {
     bindTurnCopyButtons(card);
   }
+
 
   function renderCardModelPopoverList(card, t) {
     const list = card.querySelector('.card-model-popover-list');
@@ -2811,51 +2786,130 @@ document.addEventListener('DOMContentLoaded', () => {
     bindModelCatalogActions(list, t);
   }
 
+  // Thinking level as ChatGPT shows it: the level's name above a track with one stop per level.
+  // A transparent native range on top keeps pointer and keyboard input; the visual layer
+  // follows the pointer while dragging and settles on the nearest stop on release.
+  const EFFORT_HOLD_MS = 4000;
+  function renderEffortSlider(container, t, efforts, current, onPicked) {
+    if (!container) return;
+    const remoteIndex = Math.max(0, efforts.findIndex(e => e.id === current.id));
+    const layout = `${t.tabId}|${efforts.map(e => e.id).join(',')}`;
+    const live = container.cgqSlider;
+    if (live && container.dataset.signature === layout) {
+      // Same slider: move it in place (animated) unless the user just picked a level
+      // and the page has not reported it yet.
+      if (!live.busy() && Date.now() > live.holdUntil) live.moveTo(remoteIndex, true);
+      return;
+    }
+    container.dataset.signature = layout;
+    const max = efforts.length - 1;
+    const name = i => efforts[i].title || efforts[i].label;
+    container.innerHTML = `
+      <div class="cgq-effort-slider">
+        <div class="cgq-effort-value" aria-hidden="true"><span>${escapeHtml(name(remoteIndex))}</span></div>
+        <div class="cgq-effort-track">
+          <span class="cgq-effort-fill"></span>
+          ${efforts.map((_, i) => `<span class="cgq-effort-tick" style="--at:${max ? i / max : 0}"></span>`).join('')}
+          <span class="cgq-effort-thumb-rail"><span class="cgq-effort-thumb"></span></span>
+          <input type="range" min="0" max="${max}" step="any" value="${remoteIndex}" aria-label="思考レベル">
+        </div>
+        <div class="cgq-effort-stops" aria-hidden="true">${efforts.map((e, i) => `<span style="--at:${max ? i / max : 0}">${escapeHtml(e.label)}</span>`).join('')}</div>
+      </div>`;
+    const root = container.querySelector('.cgq-effort-slider');
+    const input = root.querySelector('input');
+    const value = root.querySelector('.cgq-effort-value');
+    const ticks = [...root.querySelectorAll('.cgq-effort-tick')];
+    const stops = [...root.querySelectorAll('.cgq-effort-stops span')];
+    let shown = remoteIndex;
+    let index = remoteIndex;
+    let dragging = false;
+    let commitTimer = null;
+    let pendingCommit = false;
+    let committedId = efforts[remoteIndex].id;
+    const calm = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+    const paint = (pos, animate) => {
+      root.classList.toggle('is-instant', !animate);
+      root.style.setProperty('--pos', max ? pos / max : 0);
+      ticks.forEach((tick, i) => {
+        tick.classList.toggle('is-covered', i < pos - 0.05);
+        tick.classList.toggle('is-hidden', Math.abs(i - pos) < 0.35);
+      });
+      const near = Math.round(pos);
+      stops.forEach((stop, i) => stop.classList.toggle('is-active', i === near));
+      if (near !== shown) {
+        const dir = near > shown ? 1 : -1;
+        shown = near;
+        const label = value.firstElementChild;
+        label.textContent = name(near);
+        if (!calm) label.animate?.([
+          { opacity: 0, transform: `translateX(${dir * 6}px)` },
+          { opacity: 1, transform: 'none' }
+        ], { duration: 220, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+      }
+      input.setAttribute('aria-valuetext', name(near));
+    };
+
+    const commit = () => {
+      clearTimeout(commitTimer);
+      pendingCommit = true;
+      commitTimer = setTimeout(() => {
+        pendingCommit = false;
+        const effort = efforts[index];
+        if (effort.id === committedId) return;
+        committedId = effort.id;
+        selectedEffortOverride[t.tabId] = effort.id;
+        cardModelSelections[t.tabId] = { model: selectedModelOverride[t.tabId] || t.model || 'auto', effort: effort.id };
+        sendRemoteCommand(t.tabId, { action: 'SWITCH_EFFORT', effort: effort.id });
+        showToast(`思考レベルを ${name(index)} に設定しました`);
+        onPicked?.();
+      }, 350); // rapid arrow presses send only the level they end on
+    };
+
+    const moveTo = (i, animate) => {
+      index = Math.min(max, Math.max(0, i));
+      input.value = index;
+      paint(index, animate);
+    };
+    const pick = i => {
+      container.cgqSlider.holdUntil = Date.now() + EFFORT_HOLD_MS;
+      moveTo(i, true);
+      commit();
+    };
+
+    input.addEventListener('click', e => e.stopPropagation());
+    input.addEventListener('pointerdown', () => { dragging = true; root.classList.add('is-pressed'); });
+    input.addEventListener('input', () => paint(Number(input.value), !dragging));
+    const release = () => {
+      if (!dragging) return;
+      dragging = false;
+      root.classList.remove('is-pressed');
+      pick(Math.round(Number(input.value)));
+    };
+    input.addEventListener('pointerup', release);
+    input.addEventListener('pointercancel', release);
+    input.addEventListener('change', () => { if (!dragging) pick(Math.round(Number(input.value))); });
+    input.addEventListener('keydown', e => {
+      const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+      const to = e.key === 'Home' ? 0 : e.key === 'End' ? max : step === undefined ? null : index + step;
+      if (to === null) return;
+      e.preventDefault();
+      pick(to);
+    });
+
+    container.cgqSlider = {
+      moveTo: (i, animate) => { committedId = efforts[i].id; moveTo(i, animate); },
+      busy: () => dragging || pendingCommit,
+      holdUntil: 0
+    };
+    paint(remoteIndex, false);
+  }
+
   function renderCardEffortPopoverList(card, t) {
-    const list = card.querySelector('.card-effort-popover-list');
-    if (!list) return;
     const modelData = getModelAndEffortData(t);
     if (!modelData) return;
-    const { efforts, curEffortEntry } = modelData;
-
-    list.innerHTML = efforts.map(e => {
-      const isSelected = (e.id === curEffortEntry.id);
-      return `
-        <div class="cgq-popover-item ${isSelected ? 'selected' : ''}" data-effort-id="${e.id}">
-          <div class="cgq-popover-item-left">
-            <span class="cgq-popover-item-icon">${getEffortIconSvg(e.id)}</span>
-            <div class="cgq-popover-item-content">
-              <span class="cgq-popover-item-title">${escapeHtml(e.label)}</span>
-              ${e.desc ? `<span class="cgq-popover-item-desc">${escapeHtml(e.desc)}</span>` : ''}
-            </div>
-          </div>
-          ${isSelected ? `
-            <div class="cgq-popover-item-check">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            </div>
-          ` : ''}
-        </div>
-      `;
-    }).join('');
-
-    list.querySelectorAll('.cgq-popover-item').forEach(item => {
-      item.onclick = (e) => {
-        e.stopPropagation();
-        const targetEffort = item.dataset.effortId;
-        selectedEffortOverride[t.tabId] = targetEffort;
-        cardModelSelections[t.tabId] = {
-          model: selectedModelOverride[t.tabId] || t.model || 'auto',
-          effort: targetEffort
-        };
-        sendRemoteCommand(t.tabId, { action: 'SWITCH_EFFORT', effort: targetEffort });
-        showToast(`思考レベルを ${item.querySelector('.cgq-popover-item-title')?.textContent || targetEffort} に設定しました`);
-        closeAllPopovers();
-        const updatedT = cachedTabsData.get(t.tabId) || t;
-        updateExistingCard(card, updatedT, Date.now());
-      };
-    });
+    renderEffortSlider(card.querySelector('.card-effort-popover-list'), t, modelData.efforts, modelData.curEffortEntry,
+      () => updateExistingCard(card, cachedTabsData.get(t.tabId) || t, Date.now()));
   }
 
   function bindCardStaticEvents(card, tabId) {
@@ -2900,26 +2954,13 @@ document.addEventListener('DOMContentLoaded', () => {
         closeAllPopovers();
         if (!isOpen) {
           const t = cachedTabsData.get(tabId);
-          if (t) renderCardModelPopoverList(card, t);
+          if (t) {
+            renderCardModelPopoverList(card, t);
+            renderCardEffortPopoverList(card, t);
+          }
           modelPopover.style.display = 'block';
           modelPillBtn.setAttribute('aria-expanded', 'true');
           if (t) refreshServiceModels(t);
-        }
-      };
-    }
-
-    const effortPillBtn = card.querySelector('.card-effort-pill');
-    const effortPopover = card.querySelector('.card-effort-popover');
-    if (effortPillBtn && effortPopover) {
-      effortPillBtn.onclick = (e) => {
-        e.stopPropagation();
-        const isOpen = effortPopover.style.display === 'block';
-        closeAllPopovers();
-        if (!isOpen) {
-          const t = cachedTabsData.get(tabId);
-          if (t) renderCardEffortPopoverList(card, t);
-          effortPopover.style.display = 'block';
-          effortPillBtn.setAttribute('aria-expanded', 'true');
         }
       };
     }
@@ -2950,7 +2991,7 @@ document.addEventListener('DOMContentLoaded', () => {
           setTimeout(() => addBtn.classList.remove('sent'), 350);
         }
         input.value = '';
-        input.style.height = 'auto';
+        fitInput(input, 100);
         tabInputDrafts.delete(tabId);
         toolInput.clear();
         showToast('キューに追加しました');
@@ -2961,8 +3002,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (input) {
       input.addEventListener('input', () => {
         tabInputDrafts.set(tabId, input.value);
-        input.style.height = 'auto';
-        input.style.height = Math.min(100, input.scrollHeight) + 'px';
+        fitInput(input, 100);
       });
       input.addEventListener('compositionstart', () => { isComposing = true; });
       input.addEventListener('compositionend', () => {
@@ -3021,6 +3061,39 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Returns false when the command was not sent, so the caller keeps the user's input.
+  // Choice widgets from the answer (radio options + submit button): choose here, applied in the tab.
+  function buildChoicesHtml(qa, t) {
+    if (!Array.isArray(qa.choices) || !qa.choices.length) return '';
+    return qa.choices.map((group, g) => {
+      const name = `cgq-choice-${t.tabId}-${qa.turn}-${g}`;
+      return `
+        <form class="cgq-choice" data-tab-id="${escapeHtml(t.tabId)}" data-key="${escapeHtml(group.key)}">
+          ${group.options.map((option, i) => `
+            <label class="cgq-choice-option">
+              <input type="radio" name="${escapeHtml(name)}" value="${i}" ${option.checked ? 'checked' : ''} ${group.done ? 'disabled' : ''}>
+              <span class="cgq-choice-text">
+                <span class="cgq-choice-label">${escapeHtml(option.label)}</span>
+                ${option.desc ? `<span class="cgq-choice-desc">${escapeHtml(option.desc)}</span>` : ''}
+              </span>
+            </label>
+          `).join('')}
+          ${group.submitLabel ? `<button type="submit" class="cgq-btn primary cgq-choice-submit" ${group.done ? 'disabled' : ''}>${escapeHtml(group.submitLabel)}</button>` : ''}
+        </form>
+      `;
+    }).join('');
+  }
+
+  document.addEventListener('submit', e => {
+    const form = e.target.closest?.('.cgq-choice');
+    if (!form) return;
+    e.preventDefault();
+    const picked = form.querySelector('input[type="radio"]:checked');
+    if (!picked) return showToast('選択肢を選んでください');
+    if (sendRemoteCommand(form.dataset.tabId, { action: 'CHOOSE_OPTION', key: form.dataset.key, option: Number(picked.value) })) {
+      form.querySelectorAll('input, button').forEach(el => { el.disabled = true; });
+    }
+  });
+
   function sendRemoteCommand(tabId, command) {
     if (cachedTabsData.get(tabId)?.needsConnection) {
       showToast('対象タブを再読み込みして接続してください。');

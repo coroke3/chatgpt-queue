@@ -195,7 +195,7 @@ test('ChatGPT connection lost banner triggers countdown and reload within 2 minu
   // First check: records start time, schedules reload
   qm.checkConnectionAndAutoReload();
   assert.ok(qm.connectionLostSince, 'Must record connectionLostSince timestamp');
-  assert.ok(qm.progressText.includes('2分以内に再読み込み'), 'Must show countdown in progressText');
+  assert.ok(qm.progressText.includes('2分後に再読み込み'), 'Must show countdown in progressText');
   assert.equal(reloaded, false, 'Should not reload immediately');
 
   // Fast-forward past 120 seconds (2 minutes)
@@ -255,7 +255,7 @@ test('Gemini thinking level (思考レベル) detection, switching and UI contro
   const info = DOM.getCurrentModelInfo();
   assert.equal(info.supportsEffort, true, 'Gemini with thinking level button must report supportsEffort: true');
   assert.equal(info.effort, 'high', 'Must detect high effort');
-  assert.equal(info.effortLabel, 'High');
+  assert.equal(info.effortLabel, '高', 'Gemini levels use Gemini\'s own labels (低 / 標準 / 高)');
   assert.ok(info.availableEfforts.length >= 4, 'Must have availableEfforts for Gemini');
 
   // Test switching effort in Gemini
