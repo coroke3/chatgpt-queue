@@ -3326,11 +3326,23 @@
     }
 
     async updateItem(id, newText) {
+      if (!String(newText || '').trim()) { showToast('プロンプトを空にはできません'); return false; }
+      if (this.activeItem?.id === id && this.isComposerLocked()) { showToast('送信処理中の項目は編集できません'); return false; }
       const item = this.items.find(item => item.id === id);
       if (item) {
+        try {
+          await chrome.storage.local.set({ [this.storageKeyQueue]: this.items.map(entry =>
+            entry.id === id ? { ...entry, text: newText.trim() } : entry) });
+        } catch (error) {
+          showToast('編集内容を保存できませんでした。入力内容を保持しています。');
+          return false;
+        }
         item.text = newText.trim();
-        await this.saveQueue();
+        this.notify();
+        return true;
       }
+      showToast('この項目は既に送信または削除されています');
+      return false;
     }
 
     async clearQueue() {
@@ -3379,6 +3391,11 @@
         const loopInterval = document.hidden ? (isIdle ? 2500 : 1000) : (isIdle ? 1000 : 400);
         await sleep(loopInterval);
         await this.checkUrlChange();
+
+        if (this.editingItemId && this.items.some(item => item.id === this.editingItemId)) {
+          this.setState(QueueState.WAITING_GENERATION, 'キューのプロンプトを編集中...');
+          continue;
+        }
 
         // Research plans require a user review. Do not feed the next queued prompt into it,
         // or treat time spent reviewing as a stalled generation that needs a new chat.
@@ -3539,7 +3556,7 @@
           await sleep(document.hidden ? 500 : 100);
         }
 
-        if (aborted || modelPicker.pending || composerTools.pending) continue;
+        if (aborted || this.editingItemId === nextItem.id || modelPicker.pending || composerTools.pending) continue;
         if (await this.checkConversationLimitAndStartNewChat()) continue;
 
         // 5.5 Verify the requested model before typing or sending anything.
@@ -3986,6 +4003,7 @@
       this.domSubtext = panel.querySelector('#cgq-panel-subtext');
       this.domChevron = panel.querySelector('#cgq-btn-chevron');
       this.domList = panel.querySelector('#cgq-panel-list');
+      panel.querySelectorAll('button').forEach(button => { button.type = 'button'; });
       this.domProgress = panel.querySelector('#cgq-panel-progress');
       this.domProgressBar = panel.querySelector('#cgq-panel-progress-fill');
       this.domBtnBulk = panel.querySelector('#cgq-btn-bulk');
@@ -4209,6 +4227,14 @@
     renderItems() {
       const qm = this.qm;
 
+      // Heartbeats and generation progress must not replace a live textarea or its caret.
+      if (this.editingId && qm.items.some(item => item.id === this.editingId) &&
+        this.domList.querySelector('.cgq-edit-textarea')) return;
+      if (this.editingId && !qm.items.some(item => item.id === this.editingId)) {
+        this.editingId = null;
+        qm.editingItemId = null;
+      }
+
       this.domList.innerHTML = qm.items.map((item, index) => {
         const isEditing = this.editingId === item.id;
         const isActive = qm.activeItem && qm.activeItem.id === item.id;
@@ -4262,6 +4288,7 @@
         `;
       }).join('');
 
+      this.domList.querySelectorAll('button').forEach(button => { button.type = 'button'; });
       this.domList.querySelectorAll('.cgq-item-btn').forEach(btn => {
         btn.onclick = (e) => {
           e.stopPropagation();
@@ -4272,8 +4299,14 @@
           } else if (action === 'send-now') {
             qm.sendImmediately(id);
           } else if (action === 'edit') {
+            if (qm.activeItem?.id === id && qm.isComposerLocked()) {
+              showToast('送信処理中の項目は編集できません');
+              return;
+            }
             this.editingId = id;
+            qm.editingItemId = id;
             this.updateUI();
+            this.domList.querySelector('.cgq-edit-textarea')?.focus();
           }
         };
       });
@@ -4281,19 +4314,20 @@
       const btnSaveEdit = this.domList.querySelector('#cgq-save-edit');
       const btnCancelEdit = this.domList.querySelector('#cgq-cancel-edit');
       if (btnSaveEdit) {
-        btnSaveEdit.onclick = () => {
+        btnSaveEdit.onclick = async e => {
+          e.stopPropagation();
           const id = btnSaveEdit.dataset.id;
-          const editInput = this.domList.querySelector(`#cgq-edit-input-${id}`);
-          if (editInput) {
-            qm.updateItem(id, editInput.value);
-          }
+          const editInput = this.domList.querySelector('.cgq-edit-textarea');
+          if (!editInput || !await qm.updateItem(id, editInput.value)) return;
           this.editingId = null;
+          qm.editingItemId = null;
           this.updateUI();
         };
       }
       if (btnCancelEdit) {
         btnCancelEdit.onclick = () => {
           this.editingId = null;
+          qm.editingItemId = null;
           this.updateUI();
         };
       }
@@ -4378,7 +4412,7 @@
       const isComposerControl = el => {
         const input = DOM.getPromptInput();
         const composer = input?.closest('form, input-area, input-container, .text-input-field');
-        return !!(composer && el && composer.contains(el));
+        return !!(el && ((composer && composer.contains(el)) || el === DOM.getSendButton()));
       };
 
       const swallowIfLocked = (e) => {
@@ -4402,8 +4436,7 @@
         return true;
       };
       // 1. Enter key in composer:
-      // - 初回送信 (ChatGPT idle, queue empty): 直接ChatGPTに送信
-      // - 実行中 (ChatGPT generating or queue busy): キューに追加 (割り込み送信可能・不可能両対応)
+      // Enter always enqueues; the native send button remains available for intervention.
       document.addEventListener('keydown', async (e) => {
         if (!e.isTrusted) return;
         if (this.qm.sendingNow) return;
@@ -4447,27 +4480,14 @@
           }
           const text = DOM.getComposerText();
 
-          if (this.isBusy()) {
-            // 実行中: 割り込み送信可能・不可能どちらの場合もキューに追加
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-
-            if (text) {
-              await this.qm.enqueue(text, { tools: composerTools.capture().tools });
-              DOM.clearComposer();
-              this.qm.isStuckToBottom = true;
-              DOM.scrollToBottom(true);
-            }
-            return;
-          }
-
-          // 初回送信 (アイドル時): 直接chatGPTに送信
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
           if (text) {
-            this.qm.lastSentPrompt = text;
-            this.qm.lastSentTimestamp = Date.now();
+            await this.qm.enqueue(text, { tools: composerTools.capture().tools });
+            DOM.clearComposer();
             this.qm.isStuckToBottom = true;
-            setTimeout(() => DOM.scrollToBottom(true), 150);
+            DOM.scrollToBottom(true);
           }
           return;
         }
@@ -4492,7 +4512,7 @@
         if (this.qm.sendingNow) return;
 
         const sendBtn = e.target.closest(
-          'button[data-testid="send-button"], #composer-submit-button, button[aria-label*="Send" i], button[aria-label*="送信"], button.send-button, button[mattooltip*="Send" i]'
+          'button[data-testid="send-button"], button[data-testid="fruitjuice-send-button"], #composer-submit-button, button[aria-label*="Send" i], button[aria-label*="送信"], button.send-button, button[mattooltip*="Send" i]'
         );
         if (!sendBtn || !isComposerControl(sendBtn)) return;
         if (e.target.closest('#cgq-injected-btn, #cgq-injected-bulk-btn')) return;
@@ -4513,8 +4533,8 @@
 
         if (swallowIfLocked(e)) return;
 
-        if (this.isBusy()) {
-          // 実行中割り込み送信可能 -> キューに追加
+        if (!IS_CHATGPT && this.isBusy()) {
+          // Gemini keeps its busy-send fallback. ChatGPT's native button handles intervention.
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
@@ -4553,7 +4573,7 @@
         }
         if (swallowIfLocked(e)) return;
 
-        if (this.isBusy()) {
+        if (!IS_CHATGPT && this.isBusy()) {
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
@@ -4684,8 +4704,8 @@
             <!-- Enter to Queue setting -->
             <div class="cgq-form-row">
               <div>
-                <div style="font-weight: 600; font-size: 12px;">実行中のEnterで自動キュー追加 (初回は直接送信)</div>
-                <div class="cgq-form-desc">ChatGPT実行中はEnter/送信で自動的にキューに追加し、待機中(初回)は直接送信します</div>
+                <div style="font-weight: 600; font-size: 12px;">Enterでキューに追加</div>
+                <div class="cgq-form-desc">Enterと＋はキュー追加。Shift+Enterは改行。ChatGPTの送信ボタンは、途中介入できるときは途中介入に使えます。OFFではEnterで改行します。</div>
               </div>
               <label class="cgq-switch">
                 <input type="checkbox" id="cgq-set-enter-queue" ${s.enterToQueue !== false ? 'checked' : ''}>
