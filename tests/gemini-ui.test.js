@@ -330,5 +330,5 @@ test('Gemini thinking level is switched through the mode menu by exact label, ne
   assert.deepEqual([...clicked], ['高'], 'only the 高 thinking level is clicked');
   const info = DOM.getCurrentModelInfo();
   assert.equal(info.effort, 'high');
-  assert.equal(info.effortLabel, '高');
+  assert.equal(info.effortLabel, 'High', 'reported in English only');
 });

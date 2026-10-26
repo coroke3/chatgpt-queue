@@ -255,7 +255,7 @@ test('Gemini thinking level (思考レベル) detection, switching and UI contro
   const info = DOM.getCurrentModelInfo();
   assert.equal(info.supportsEffort, true, 'Gemini with thinking level button must report supportsEffort: true');
   assert.equal(info.effort, 'high', 'Must detect high effort');
-  assert.equal(info.effortLabel, '高', 'Gemini levels use Gemini\'s own labels (低 / 標準 / 高)');
+  assert.equal(info.effortLabel, 'High', 'effort names are reported in English only');
   assert.ok(info.availableEfforts.length >= 4, 'Must have availableEfforts for Gemini');
 
   // Test switching effort in Gemini
@@ -342,10 +342,10 @@ test('ChatGPT effort settings (instant, 中, 高) detection, switching and UI fo
   const badgeMatch = dashJs.match(/function formatEffortBadge\([\s\S]*?\n  \}/);
   assert.ok(badgeMatch, 'formatEffortBadge function must exist in dashboard.js');
 
-  const formatEffortBadge = new Function(`${badgeMatch[0]}; function formatEffortLabel(id) { return id; }; return formatEffortBadge;`)();
+  const formatEffortBadge = new Function(`${badgeMatch[0]}; function formatEffortLabel(id) { return { instant: 'Instant', medium: 'Medium', high: 'High' }[id] || id; }; return formatEffortBadge;`)();
   assert.equal(formatEffortBadge('instant'), 'Instant');
-  assert.equal(formatEffortBadge('medium'), '中');
-  assert.equal(formatEffortBadge('high'), '高');
+  assert.equal(formatEffortBadge('medium'), 'Medium', 'English only');
+  assert.equal(formatEffortBadge('high'), 'High');
   assert.equal(formatEffortBadge('auto'), '');
 });
 

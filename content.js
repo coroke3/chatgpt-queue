@@ -789,7 +789,6 @@
     },
 
     formatEffortLabel(effort) {
-      if (IS_GEMINI && GEMINI_THINKING_LABELS[effort]) return GEMINI_THINKING_LABELS[effort][0];
       switch (effort) {
         case 'instant': return 'Instant';
         case 'off':

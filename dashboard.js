@@ -1608,9 +1608,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatEffortBadge(effort, effortLabel = '') {
     if (!effort || effort === 'auto') return '';
-    if (effort === 'instant' || effort === 'low') return 'Instant';
-    if (effort === 'medium') return '中';
-    if (effort === 'high') return '高';
     return formatEffortLabel(effort, effortLabel);
   }
 
@@ -1634,28 +1631,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const rawEfforts = Array.isArray(t.availableEfforts) && t.availableEfforts.length > 0 ? t.availableEfforts : (
       isGemini ? [
         { id: 'auto', label: 'Auto', title: 'Auto', desc: 'モデルのデフォルト推論設定' },
-        { id: 'low', label: 'Low', title: '低 (Low)', desc: '思考時間を抑え高速に回答' },
-        { id: 'medium', label: 'Medium', title: '中 (Medium)', desc: '標準的な思考深度と速度のバランス' },
-        { id: 'high', label: 'High', title: '高 (High)', desc: '難問・複雑なコーディング向けに最大思考' }
+        { id: 'low', label: 'Low', title: 'Low', desc: '思考時間を抑え高速に回答' },
+        { id: 'medium', label: 'Medium', title: 'Medium', desc: '標準的な思考深度と速度のバランス' },
+        { id: 'high', label: 'High', title: 'High', desc: '難問・複雑なコーディング向けに最大思考' }
       ] : [
         { id: 'auto', label: 'Auto', title: 'Auto', desc: '現在の思考設定を使用' },
-        { id: 'instant', label: 'Instant', title: 'Instant (即時)', desc: '思考時間を抑え即時・高速に回答' },
-        { id: 'medium', label: 'Medium', title: '中 (Medium)', desc: '標準的な思考深度と速度のバランス' },
-        { id: 'high', label: 'High', title: '高 (High)', desc: '難問・複雑なコーディング向けに最大思考' }
+        { id: 'instant', label: 'Instant', title: 'Instant', desc: '思考時間を抑え即時・高速に回答' },
+        { id: 'medium', label: 'Medium', title: 'Medium', desc: '標準的な思考深度と速度のバランス' },
+        { id: 'high', label: 'High', title: 'High', desc: '難問・複雑なコーディング向けに最大思考' }
       ]
     );
 
-    const efforts = rawEfforts.map(e => ({
-      ...e,
-      label: formatEffortLabel(e.id, e.label),
-      title: e.title || (
-        e.id === 'instant' ? 'Instant (即時)' :
-        e.id === 'medium' ? '中 (Medium)' :
-        e.id === 'high' ? '高 (High)' :
-        e.id === 'low' ? '低 (Low)' :
-        e.label
-      )
-    }));
+    // Effort names are shown in English only (Auto / Low / Medium / High …), whatever the page's language.
+    const efforts = rawEfforts.map(e => {
+      const label = formatEffortLabel(e.id, e.label);
+      return { ...e, label, title: label };
+    });
 
     let normalizedEffortId = activeEffortId;
     if (!isGemini && normalizedEffortId === 'low') normalizedEffortId = 'instant';
