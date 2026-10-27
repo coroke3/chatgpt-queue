@@ -64,6 +64,39 @@ test('newchat autocomplete works without a connected app menu and Ctrl+Enter can
   assert.equal(queried, false);
 });
 
+test('pasted directives stay editable and show recognition above the composer without menu queries', t => {
+  const dom = new JSDOM('<div><textarea></textarea></div>');
+  t.after(() => dom.window.close());
+  const input = dom.window.document.querySelector('textarea');
+  const controller = attach(input, { query: () => assert.fail('complete pasted directives do not open native menus') });
+  const value = '/deepresearch @"Google Drive" 調査してください\n結果は日本語で';
+  input.value = value; input.setSelectionRange(value.length, value.length);
+  input.dispatchEvent(new dom.window.Event('input'));
+  assert.equal(input.value, value);
+  assert.equal(input.previousElementSibling.className, 'cgq-prompt-chips');
+  assert.match(input.previousElementSibling.textContent, /deepresearch · 指定を認識/);
+  assert.match(input.previousElementSibling.textContent, /Google Drive · 指定を認識/);
+  assert.deepEqual(controller.getTools(), []);
+  input.value = '普通の本文 user@example.com /deepresearch';
+  controller.sync();
+  assert.equal(input.previousElementSibling.hidden, true);
+});
+
+test('normal autocomplete preserves copyable tool syntax and updates badges when removed', async t => {
+  const dom = new JSDOM('<div><textarea></textarea></div>');
+  t.after(() => dom.window.close());
+  const input = dom.window.document.querySelector('textarea');
+  attach(input, { query: async () => [{ type: 'app', platform: 'chatgpt', label: 'Google Drive', id: 'app://drive' }] });
+  input.value = '@Go'; input.setSelectionRange(3, 3);
+  input.dispatchEvent(new dom.window.Event('input'));
+  await new Promise(resolve => setTimeout(resolve, 330));
+  dom.window.document.querySelector('[role="option"]').click();
+  assert.equal(input.value, '@"Google Drive" ');
+  assert.match(input.previousElementSibling.textContent, /指定を認識/);
+  input.value = ''; input.dispatchEvent(new dom.window.Event('input'));
+  assert.equal(input.previousElementSibling.hidden, true);
+});
+
 test('dashboard bulk input forwards directives verbatim and ignores IME confirmation', async t => {
   const root = path.join(__dirname, '..');
   const dom = new JSDOM(fs.readFileSync(path.join(root, 'dashboard.html'), 'utf8'), {

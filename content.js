@@ -366,12 +366,12 @@
       return last ? { parent: last.parentElement, before: last.nextElementSibling } : null;
     },
 
-    getResearchPlanAction() {
+    getResearchPlanAction(includeDisabled = false) {
       const roots = $$v(IS_GEMINI ? 'model-response' : '[data-turn-key], [data-testid^="conversation-turn-"], [data-message-author-role="assistant"]');
       const latest = roots[roots.length - 1];
       return Array.from(latest?.querySelectorAll('button') || []).find(button =>
-        isShown(button) && !button.closest('[hidden], [inert], [aria-hidden="true"]') && !button.disabled && button.getAttribute('aria-disabled') !== 'true' &&
-        /^(?:Start research|Start researching|リサーチを開始|調査を開始|研究を開始)$/i.test(
+        isShown(button) && !button.closest('[hidden], [inert], [aria-hidden="true"]') && (includeDisabled || (!button.disabled && button.getAttribute('aria-disabled') !== 'true')) &&
+        /^(?:Start research|Start researching|リサーチを開始|調査を開始|研究を開始)(?:\s*[（(]?\s*\d+\s*(?:s|seconds?|秒)\s*[）)]?)?$/i.test(
           (button.getAttribute('aria-label') || button.innerText || button.textContent || '').trim())) || null;
     },
 
@@ -2730,10 +2730,45 @@
       return true;
     }
 
-    // After a send, remember what was sent. If the answer then shows no progress at all for
-    // STALL_MS (still "generating", disconnected, or never started), put that prompt back at the
-    // front of the queue and continue in a new chat. Kept in sessionStorage so the 2-minute
-    // reconnect reload does not reset the clock.
+    // Keep the Research start transition across reloads, including disabled countdown controls.
+    setResearchWait(mark) {
+      this.researchWait = mark;
+      try {
+        if (mark) sessionStorage.setItem('cgq_research_wait', JSON.stringify(mark));
+        else sessionStorage.removeItem('cgq_research_wait');
+      } catch (error) { console.warn('[ChatGPT Queue] Research wait could not be persisted:', error); }
+    }
+
+    recordResearchSend(tools = []) {
+      if (!tools.some(tool => CGQComposerTools.toolKind(tool) === 'research')) return;
+      this.setResearchWait({ url: this.currentUrl, phase: 'pending', at: Date.now() });
+    }
+
+    isResearchWaiting() {
+      let mark = this.researchWait;
+      if (mark === undefined) {
+        try { mark = JSON.parse(sessionStorage.getItem('cgq_research_wait') || 'null'); } catch { mark = null; }
+      }
+      if (mark && mark.url !== this.currentUrl) { this.setResearchWait(null); mark = null; }
+      const action = DOM.getResearchPlanAction(true);
+      if (action) {
+        mark = { url: this.currentUrl, phase: 'plan', at: Date.now(), length: DOM.getLastResponseLength() };
+      } else if (mark) {
+        if (mark.phase === 'plan') mark.phase = 'starting';
+        if (mark.phase === 'starting' && DOM.isGenerating()) {
+          mark.phase = 'running'; mark.at = Date.now();
+        } else if (mark.phase === 'running' && !DOM.isGenerating() && Date.now() - mark.at > 5000 && DOM.getLastResponseLength() !== mark.length) {
+          this.setResearchWait(null);
+          // Review time must not count toward the one-hour stall recovery.
+          sessionStorage.removeItem(SESSION_KEY_STALL);
+          return false;
+        }
+      }
+      if (mark) this.setResearchWait(mark);
+      return !!mark;
+    }
+
+    // Keep the sent prompt for stall recovery across the reconnect reload.
     rememberSent(item) {
       try {
         sessionStorage.setItem(SESSION_KEY_STALL, JSON.stringify({
@@ -2929,6 +2964,7 @@
       let entered = false;
       try {
         const resolved = await composerTools.resolvePrompt(clean, options.tools || []);
+        const requestedTools = resolved.tools.length ? resolved.tools : composerTools.capture().tools;
         const tokens = resolved.tools.length
           ? await composerTools.prepare(resolved.tools)
           : composerTools.nativeTokens().map(token => token.el.cloneNode(true));
@@ -2943,6 +2979,7 @@
         }
         this.sendingNow = true;
         if (!await HumanSimulator.clickSend(resolved.text)) throw new Error('送信を確認できません。対象タブで送信状況を確認してください');
+        this.recordResearchSend(requestedTools);
         this.lastSentTimestamp = Date.now();
         this.lastSentPrompt = resolved.text;
         return { success: true };
@@ -3431,7 +3468,14 @@
 
     togglePause() {
       this.isPaused = !this.isPaused;
-      if (!this.isPaused) this.chatRolloverFailed = false;
+      if (!this.isPaused) {
+        this.chatRolloverFailed = false;
+        // An explicit resume after cancellation can release an uncertain Research transition.
+        if (!DOM.getResearchPlanAction(true) && !DOM.isGenerating()) {
+          if (this.researchWait) sessionStorage.removeItem(SESSION_KEY_STALL);
+          this.setResearchWait(null);
+        }
+      }
       this.setState(this.isPaused ? QueueState.PAUSED : QueueState.IDLE);
       showToast(this.isPaused ? 'キューを一時停止しました' : 'キューを再開しました');
     }
@@ -3478,8 +3522,8 @@
 
         // Research plans require a user review. Do not feed the next queued prompt into it,
         // or treat time spent reviewing as a stalled generation that needs a new chat.
-        if (DOM.getResearchPlanAction()) {
-          if (!this.isPaused) this.setState(QueueState.WAITING_GENERATION, 'Deep Researchの計画確認待ち: 対象タブでリサーチを開始してください');
+        if (this.isResearchWaiting()) {
+          if (!this.isPaused) this.setState(QueueState.WAITING_GENERATION, 'Deep Researchの計画確認待ち／開始・調査完了待ち: 対象タブの状況を確認してください');
           continue;
         }
 
@@ -3533,7 +3577,7 @@
 
         for (let check = 0; check < checkCount; check++) {
           await sleep(checkDelay);
-          if (this.manualSending || DOM.getConversationLimitWarning() || DOM.getResearchPlanAction() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
+          if (this.manualSending || DOM.getConversationLimitWarning() || this.isResearchWaiting() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
             stable = false;
             break;
           }
@@ -3621,7 +3665,7 @@
             aborted = true;
             break;
           }
-          if (DOM.getConversationLimitWarning() || DOM.getResearchPlanAction() || DOM.isGenerating()) {
+          if (DOM.getConversationLimitWarning() || this.isResearchWaiting() || DOM.isGenerating()) {
             aborted = true;
             break;
           }
@@ -3660,7 +3704,7 @@
           try { switched = await DOM.switchReasoningEffort(nextItem.effort); } catch (e) { switched = false; }
           if (!switched) showToast(`思考設定「${DOM.formatEffortLabel(nextItem.effort)}」を変更できなかったため、現在の設定のまま続行します`);
         }
-        if (this.manualSending || Date.now() - this.lastSentTimestamp < 4000 || this.isPaused || DOM.getResearchPlanAction() || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
+        if (this.manualSending || Date.now() - this.lastSentTimestamp < 4000 || this.isPaused || this.isResearchWaiting() || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
 
         const draft = DOM.getComposerText();
         if (draft) {
@@ -3685,6 +3729,7 @@
           }
           this.draftSeen = null;
           this.setState(QueueState.PRE_SEND, '入力欄の下書きを送信中...');
+          const draftTools = composerTools.capture().tools;
           let draftSent = false;
           this.sendingNow = true;
           try {
@@ -3695,6 +3740,7 @@
             this.sendingNow = false;
           }
           if (draftSent) {
+            this.recordResearchSend(draftTools);
             this.lastSentTimestamp = Date.now();
             this.lastSentPrompt = draft;
             this.setState(QueueState.IDLE, '入力欄の下書きを送信しました');
@@ -3813,6 +3859,7 @@
         }
 
         if (sent) {
+          this.recordResearchSend(selectedTools);
           this.rememberSent(nextItem);
           this.leftoverDraft = null;
           this.sendFailures = 0;
@@ -4525,6 +4572,7 @@
         const text = DOM.getComposerText();
         if (!text) return;
         this.qm.lastSentPrompt = text;
+        this.qm.recordResearchSend(composerTools.capture().tools);
         this.qm.lastSentTimestamp = Date.now();
         this.qm.isStuckToBottom = true;
         setTimeout(() => DOM.scrollToBottom(true), 150);

@@ -319,7 +319,7 @@
   }
 
   // Shared autocomplete for Queue Manager and the bulk queue editor.
-  function attach(input, { query, scope = () => 'draft', drafts = new Map(), onError = () => {}, literal = false }) {
+  function attach(input, { query, scope = () => 'draft', drafts = new Map(), onError = () => {} }) {
     if (!input) return { getTools: () => [], sync: () => {}, close: () => {}, clear: () => {}, destroy: () => {} };
 
     // Clean up previous attachment if it exists on this input
@@ -337,14 +337,17 @@
 
     const chips = doc.createElement('div'); chips.className = 'cgq-prompt-chips';
     const menu = doc.createElement('div'); menu.className = 'cgq-prompt-menu'; menu.hidden = true; menu.setAttribute('role', 'listbox');
-    input.insertAdjacentElement('afterend', chips);
+    chips.setAttribute('aria-live', 'polite');
+    input.insertAdjacentElement('beforebegin', chips);
     if (host) host.append(menu);
 
     let timer, sequence = 0, options = [], index = 0, match = null, renderedSignature;
     const getTools = () => normalize(drafts.get(scope()));
     const close = () => { sequence++; menu.hidden = true; input.removeAttribute('aria-expanded'); };
     const sync = () => {
-      const signature = `${scope()}:${JSON.stringify(getTools())}`;
+      // Preview bare prefixes too; sending still requires a prompt body.
+      const parsed = parsePrompt(`${input.value}\n__cgq_preview_body__`);
+      const signature = `${scope()}:${JSON.stringify(getTools())}:${JSON.stringify(parsed.requests)}:${parsed.action || ''}`;
       if (signature === renderedSignature) return;
       renderedSignature = signature;
       close(); chips.replaceChildren();
@@ -357,6 +360,16 @@
           sync();
         };
         chips.append(button);
+      }
+      for (const request of parsed.requests) {
+        const badge = doc.createElement('span'); badge.className = 'cgq-prompt-chip';
+        badge.textContent = `${request.marker}${request.label} · 指定を認識`;
+        badge.title = '文字列は入力欄に残ります。送信時に対象タブで利用できるか確認します。';
+        chips.append(badge);
+      }
+      if (parsed.action === 'newchat') {
+        const badge = doc.createElement('span'); badge.className = 'cgq-prompt-chip';
+        badge.textContent = '/newchat · キューで新しいチャットを開始'; chips.append(badge);
       }
       chips.hidden = !chips.childElementCount;
     };
@@ -371,29 +384,13 @@
         input.focus();
         return;
       }
-      if (literal) {
-        const prefix = tool.type === 'app' ? '@' : '/';
-        const label = /\s/.test(tool.label) ? `"${tool.label}"` : tool.label;
-        const insertion = prefix + label + ' ';
-        const end = input.selectionStart;
-        input.value = input.value.slice(0, match.start) + insertion + input.value.slice(end);
-        input.setSelectionRange(match.start + insertion.length, match.start + insertion.length);
-        close();
-        input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
-        input.focus();
-        return;
-      }
-      let values = getTools();
-      values = values.filter(item => item.id !== tool.id && item.label.toLowerCase() !== tool.label.toLowerCase());
-      if (tool.type === 'tool') {
-        values = values.filter(item => item.type !== 'tool');
-      }
-      values.push(tool);
-      drafts.set(scope(), normalize(values));
+      const prefix = tool.type === 'app' ? '@' : '/';
+      const label = /\s/.test(tool.label) ? `"${tool.label}"` : tool.label;
+      const insertion = prefix + label + ' ';
       const end = input.selectionStart;
-      input.value = input.value.slice(0, match.start) + input.value.slice(end);
-      input.setSelectionRange(match.start, match.start);
-      sync();
+      input.value = input.value.slice(0, match.start) + insertion + input.value.slice(end);
+      input.setSelectionRange(match.start + insertion.length, match.start + insertion.length);
+      close();
       input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
       input.focus();
     };
@@ -408,6 +405,7 @@
     };
     const update = () => {
       clearTimeout(timer);
+      sync();
       if (input.disabled) return close();
       const before = input.value.slice(0, input.selectionStart);
       const found = before.match(/(?:^|\s)([@/])([^\s@/]{0,60})$/);

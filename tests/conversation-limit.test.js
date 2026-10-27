@@ -21,6 +21,16 @@ test('Research plan review holds the next queue item without retrying, then resu
     assert.equal(f.queue.items.length, 1);
     assert.match(f.queue.currentAction, /計画確認待ち/);
     f.window.document.querySelector('main button').remove();
+    // Disappearance is a start transition, not proof that the research has finished.
+    assert.equal(f.queue.isResearchWaiting(), true);
+    f.DOM.isGenerating = () => true;
+    assert.equal(f.queue.isResearchWaiting(), true);
+    const mark = JSON.parse(f.window.sessionStorage.getItem('cgq_research_wait'));
+    mark.at -= 6000;
+    f.window.sessionStorage.setItem('cgq_research_wait', JSON.stringify(mark));
+    f.queue.researchWait = mark;
+    f.DOM.isGenerating = () => false;
+    f.DOM.getLastResponseLength = () => mark.length + 100;
     f.queue.checkStalledAndStartNewChat = async () => false;
     f.HumanSimulator.typeText = async () => true;
     let sent = false;
@@ -31,6 +41,31 @@ test('Research plan review holds the next queue item without retrying, then resu
   }
 });
 
+test('Research submission, countdown, start gap and reload retain subsequent queued work', async t => {
+  for (const platform of ['chatgpt', 'gemini']) {
+    const url = platform === 'gemini' ? 'https://gemini.google.com/app/test' : 'https://chatgpt.com/c/test';
+    const f = fixture(t, { url, html: '<textarea id="prompt-textarea"></textarea>' });
+    await f.queue.enqueue('Next prompt');
+    f.queue.recordResearchSend([{ type: 'tool', id: `${platform}:tool:research`, label: 'Deep Research', platform }]);
+    f.HumanSimulator.typeText = () => assert.fail('must not inject during Research start');
+    f.queue.checkStalledAndStartNewChat = () => assert.fail('start wait is not a stalled answer');
+    await f.queue.runLoopStep();
+    const root = platform === 'gemini' ? 'model-response' : 'article data-turn-key="latest"';
+    const tag = root.split(' ')[0];
+    f.window.document.querySelector('main').insertAdjacentHTML('beforeend', `<${root}><button disabled>リサーチを開始 (30秒)</button></${tag}>`);
+    assert.ok(f.DOM.getResearchPlanAction(true));
+    await f.queue.runLoopStep();
+    f.window.document.querySelector('main button').remove();
+    await f.queue.runLoopStep();
+    const next = fixture(t, { url, session: { cgq_research_wait: f.window.sessionStorage.getItem('cgq_research_wait') } });
+    assert.equal(next.queue.isResearchWaiting(), true);
+    assert.equal(f.queue.items.length, 1);
+    next.queue.isPaused = true;
+    next.queue.togglePause();
+    assert.equal(next.queue.isResearchWaiting(), false);
+  }
+});
+
 test('historical, disabled, or hidden Research plan controls do not hold ordinary queue items', t => {
   const f = fixture(t, { html: '<article data-turn-key="old"><button>Start research</button></article><article data-turn-key="latest">Finished report</article>' });
   assert.equal(f.DOM.getResearchPlanAction(), null);
@@ -38,6 +73,15 @@ test('historical, disabled, or hidden Research plan controls do not hold ordinar
     f.window.document.querySelector('main').innerHTML = `<article data-turn-key="latest">${html}</article>`;
     assert.equal(f.DOM.getResearchPlanAction(), null);
   }
+});
+
+test('Research wait remains in memory if persistence fails and does not follow another conversation', t => {
+  const f = fixture(t);
+  Object.defineProperty(f.window.Storage.prototype, 'setItem', { value() { throw new Error('quota'); }, configurable: true });
+  f.queue.recordResearchSend([{ type: 'tool', label: 'Deep Research', id: 'chatgpt:tool:research' }]);
+  assert.equal(f.queue.isResearchWaiting(), true);
+  f.queue.currentUrl = 'https://chatgpt.com/c/another-chat';
+  assert.equal(f.queue.isResearchWaiting(), false);
 });
 
 test('an unavailable tool pause retains its diagnostic reason on subsequent loop steps', async t => {
@@ -133,6 +177,25 @@ test('plain text app requests select real tools and confirm the stripped prompt 
   f.window.__stopLoop = () => sent;
   await assert.rejects(f.queue.startLoop(), /TEST_STOP/);
   assert.equal(f.queue.items[0].text, '@"Google Drive" Summarize');
+});
+
+test('a confirmed Research queue submission arms the wait before processing its successor', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+  const tool = { platform: 'chatgpt', type: 'tool', id: 'app://connector_openai_deep_research', label: 'Deep Research' };
+  await f.queue.enqueueMany(['/deepresearch 調べてください', 'Next prompt']);
+  f.composerTools.query = async () => [tool];
+  f.composerTools.prepare = async () => [];
+  f.composerTools.capture = () => ({ text: '', tools: [tool] });
+  f.HumanSimulator.typeText = async () => true;
+  let sent = false;
+  f.HumanSimulator.clickSend = async () => { sent = true; return true; };
+  f.window.__stopLoop = () => sent;
+  await assert.rejects(f.queue.startLoop(), /TEST_STOP/);
+  f.window.__stopLoop = null;
+  f.HumanSimulator.typeText = () => assert.fail('must wait after the confirmed Research submission');
+  await f.queue.runLoopStep();
+  assert.equal(f.queue.researchWait.phase, 'pending');
+  assert.equal(f.queue.items[0].text, 'Next prompt');
 });
 
 test('an unavailable text app request pauses without typing or losing the item', async t => {

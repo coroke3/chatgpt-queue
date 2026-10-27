@@ -24,7 +24,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cgq-prompt-chip { cursor: pointer; }
+button.cgq-prompt-chip { cursor: pointer; }
 .cgq-queued-tool { margin-right: 4px; font-size: 10px; }
 .cgq-prompt-menu {
   position: absolute;
