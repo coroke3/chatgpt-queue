@@ -303,18 +303,26 @@
       return selectedNodes;
     }
 
-    async resolvePrompt(value, values = []) {
+    async resolvePrompt(value, values = [], onError = null) {
       const parsed = parsePrompt(value);
       let tools = normalize(values);
       if (Array.isArray(values) && tools.length !== values.length) throw new Error('保存されたアプリ・ツール指定を読み取れません。');
       if (parsed.requests.length > 20) throw new Error('アプリ・ツールの指定は20件以内にしてください。');
+      let failed = false;
       for (const request of parsed.requests) {
-        const candidates = await this.query(request.marker, request.label);
-        const matches = candidates.filter(tool => matchesQuery(tool, request.label, true));
-        if (matches.length !== 1) throw new Error(`${request.marker}${request.label} を一意に選択できません。アプリ・ツール名を確認してください。`);
-        tools = normalize([...tools, matches[0]]);
+        try {
+          const candidates = await this.query(request.marker, request.label);
+          const matches = candidates.filter(tool => matchesQuery(tool, request.label, true));
+          if (matches.length !== 1) throw new Error(`${request.marker}${request.label} を一意に選択できません。アプリ・ツール名を確認してください。`);
+          tools = normalize([...tools, matches[0]]);
+        } catch (error) {
+          if (!onError) throw error;
+          failed = true;
+          onError(error);
+        }
       }
-      return { text: parsed.text, tools };
+      // Keep failed skill/app instructions visible to the model as ordinary text.
+      return { text: failed ? String(value).trim() : parsed.text, tools };
     }
   }
 

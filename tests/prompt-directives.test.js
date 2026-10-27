@@ -31,6 +31,19 @@ test('plain directives resolve live IDs and reject ambiguous or missing selectio
   await assert.rejects(native.resolvePrompt('@GitHub Question'), /一意に選択できません/);
 });
 
+test('best effort resolution retains available apps and failed skill instructions without swallowing strict errors', async () => {
+  const native = new NativeTools('chatgpt', { doc: {} });
+  const github = { type: 'app', platform: 'chatgpt', label: 'GitHub', id: 'app://github' };
+  native.query = async (marker, label) => label === 'GitHub' ? [github] : [];
+  const errors = [];
+  const prompt = '@GitHub /my-skill Summarize\nwith sources';
+  const result = await native.resolvePrompt(prompt, [], error => errors.push(error.message));
+  assert.equal(result.text, prompt);
+  assert.deepEqual(result.tools, [github]);
+  assert.equal(errors.length, 1);
+  await assert.rejects(native.resolvePrompt(prompt), /my-skill/);
+});
+
 test('bulk autocomplete inserts app text on the current row without sharing chips with other rows', async t => {
   const dom = new JSDOM('<div><textarea></textarea></div>', { pretendToBeVisual: true });
   t.after(() => dom.window.close());

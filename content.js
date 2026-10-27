@@ -2730,6 +2730,48 @@
       return true;
     }
 
+    logToolError(stage, error) {
+      const entry = { at: new Date().toISOString(), platform: PLATFORM_ID, stage,
+        itemId: this.activeItem?.id || null, message: String(error?.message || error).slice(0, 1000) };
+      console.warn('[ChatGPT Queue] Optional tool failed; continuing:', entry);
+      // A key per tab avoids overwriting another tab's diagnostics. Storage never gates sending.
+      const key = `cgq_tool_errors_${this.tabId}`;
+      this.toolLogTask = (this.toolLogTask || Promise.resolve()).then(async () => {
+        const saved = (await chrome.storage.local.get([key]))[key];
+        await chrome.storage.local.set({ [key]: [...(Array.isArray(saved) ? saved : []), entry].slice(-100) });
+      }).catch(error => console.warn('[ChatGPT Queue] Could not save tool diagnostic:', error));
+    }
+
+    async preparePromptBestEffort(text, tools = [], isCancelled = () => false, preserveCurrent = false) {
+      if (preserveCurrent && !tools.length && !CGQComposerTools.parsePrompt(text).requests.length) {
+        return { resolved: { text, tools: composerTools.capture().tools },
+          tokens: composerTools.nativeTokens().map(token => token.el.cloneNode(true)) };
+      }
+      let resolved;
+      try {
+        resolved = await composerTools.resolvePrompt(text, tools, error => this.logToolError('resolve', error));
+      } catch (error) {
+        this.logToolError('resolve', error);
+        resolved = { text: String(text).trim(), tools: [] };
+      }
+      if (isCancelled()) return null;
+      let tokens;
+      try { tokens = await composerTools.prepare(resolved.tools, isCancelled) || []; }
+      catch (error) {
+        // A user's new draft or cancellation is not an optional tool failure.
+        if (isCancelled() || composerTools.capture().text) return null;
+        this.logToolError('select', error);
+        // Clean up partially selected modes, but a second menu failure must not stop the queue.
+        try { await composerTools.prepare([], isCancelled); }
+        catch (cleanupError) { this.logToolError('reset', cleanupError); await composerTools.dismiss().catch(() => {}); }
+        if (isCancelled() || composerTools.capture().text) return null;
+        DOM.clearComposer();
+        resolved = { text: String(text).trim(), tools: [] };
+        tokens = [];
+      }
+      return { resolved, tokens };
+    }
+
     // Keep the Research start transition across reloads, including disabled countdown controls.
     setResearchWait(mark) {
       this.researchWait = mark;
@@ -2963,15 +3005,27 @@
       this.manualSending = true;
       let entered = false;
       try {
-        const resolved = await composerTools.resolvePrompt(clean, options.tools || []);
-        const requestedTools = resolved.tools.length ? resolved.tools : composerTools.capture().tools;
-        const tokens = resolved.tools.length
-          ? await composerTools.prepare(resolved.tools)
-          : composerTools.nativeTokens().map(token => token.el.cloneNode(true));
+        const prepared = await this.preparePromptBestEffort(clean, options.tools || [], () => false, true);
+        if (!prepared) throw new Error('対象タブの下書きまたは生成を待機しています');
+        let { resolved, tokens } = prepared;
         const input = DOM.getPromptInput();
         if (!input) throw new Error('対象タブの入力欄が見つかりません');
-        HumanSimulator.setDOMContent(input, resolved.text, tokens);
         entered = true;
+        try { HumanSimulator.setDOMContent(input, resolved.text, tokens); }
+        catch (error) {
+          if (!tokens.length && !resolved.tools.length) throw error;
+          this.logToolError('input', error);
+          resolved = { text: clean, tools: [] };
+          HumanSimulator.setDOMContent(input, clean);
+        }
+        let requestedTools = composerTools.capture().tools;
+        if (resolved.tools.some(tool => !requestedTools.some(actual => actual.type === tool.type &&
+          (actual.id === tool.id || (tool.type === 'tool' && actual.label === tool.label))))) {
+          this.logToolError('verify', new Error('通常送信時にツール指定が失われたため、指定を本文に残します。'));
+          resolved = { text: clean, tools: [] };
+          HumanSimulator.setDOMContent(input, clean);
+          requestedTools = composerTools.capture().tools;
+        }
         await sleep(100);
         const button = DOM.getSendButton();
         if (!button || button.matches('button[data-testid*="stop" i], button[aria-label*="Stop" i], button[aria-label*="停止"], button[aria-label*="中断"], button.stop-button') || button.querySelector('rect')) {
@@ -3757,9 +3811,11 @@
         let resolvedPrompt;
         try {
           this.setState(QueueState.TYPING, 'アプリ・ツールの指定を確認中...');
-          resolvedPrompt = await composerTools.resolvePrompt(nextItem.text, nextItem.tools || []);
-          promptTokens = await composerTools.prepare(resolvedPrompt.tools, () =>
+          const prepared = await this.preparePromptBestEffort(nextItem.text, nextItem.tools || [], () =>
             this.isPaused || this.items[0]?.id !== nextItem.id || DOM.isGenerating());
+          if (!prepared) continue;
+          resolvedPrompt = prepared.resolved;
+          promptTokens = prepared.tokens;
         } catch (error) {
           this.isPaused = true;
           this.progressText = error.message;
@@ -3799,12 +3855,26 @@
             promptTokens
           );
         } catch (error) {
-          DOM.clearComposer();
-          this.leftoverDraft = null;
-          this.isPaused = true;
-          this.setState(QueueState.PAUSED, `自動送信を停止: ${error.message}`);
-          showToast(`自動送信を停止: ${error.message}`);
-          continue;
+          if (promptTokens.length || resolvedPrompt.tools.length) {
+            this.logToolError('input', error);
+            if (this.isPaused || this.items[0]?.id !== nextItem.id || DOM.isGenerating()) continue;
+            resolvedPrompt = { text: nextItem.text, tools: [] };
+            try { HumanSimulator.setDOMContent(inputElem, resolvedPrompt.text); typedSuccessfully = true; }
+            catch (inputError) {
+              DOM.clearComposer();
+              this.leftoverDraft = null;
+              this.isPaused = true;
+              this.setState(QueueState.PAUSED, `入力できないため停止: ${inputError.message}`);
+              continue;
+            }
+          } else {
+            DOM.clearComposer();
+            this.leftoverDraft = null;
+            this.isPaused = true;
+            this.setState(QueueState.PAUSED, `自動送信を停止: ${error.message}`);
+            showToast(`自動送信を停止: ${error.message}`);
+            continue;
+          }
         }
         this.leftoverDraft = resolvedPrompt.text;
 
@@ -3813,12 +3883,19 @@
         }
         if (await this.checkConversationLimitAndStartNewChat()) continue;
 
-        const selectedTools = composerTools.capture().tools;
+        let selectedTools = composerTools.capture().tools;
         if (resolvedPrompt.tools.some(tool => !selectedTools.some(actual => actual.type === tool.type &&
           (actual.id === tool.id || (tool.type === 'tool' && actual.label === tool.label))))) {
-          this.isPaused = true;
-          this.setState(QueueState.PAUSED, 'アプリ・ツールの指定が失われたため送信を停止しました。');
-          continue;
+          this.logToolError('verify', new Error('アプリ・ツールの指定が失われたため、元の指定を本文に残して送信します。'));
+          resolvedPrompt = { text: nextItem.text, tools: [] };
+          try { HumanSimulator.setDOMContent(inputElem, resolvedPrompt.text); }
+          catch (inputError) {
+            this.isPaused = true;
+            this.setState(QueueState.PAUSED, `入力できないため停止: ${inputError.message}`);
+            continue;
+          }
+          this.leftoverDraft = resolvedPrompt.text;
+          selectedTools = composerTools.capture().tools;
         }
 
         // 7. Pre-send & Click Send

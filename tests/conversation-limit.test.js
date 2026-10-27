@@ -84,16 +84,19 @@ test('Research wait remains in memory if persistence fails and does not follow a
   assert.equal(f.queue.isResearchWaiting(), false);
 });
 
-test('an unavailable tool pause retains its diagnostic reason on subsequent loop steps', async t => {
+test('unavailable Research logs the error and sends the original prompt without a phantom wait', async t => {
   const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
   await f.queue.enqueue('/deepresearch 調査');
   f.composerTools.query = async () => [];
+  let sent;
+  f.HumanSimulator.typeText = async () => true;
+  f.HumanSimulator.clickSend = async text => { sent = text; return true; };
   await f.queue.runLoopStep();
-  assert.equal(f.queue.isPaused, true);
-  const reason = f.queue.currentAction;
-  assert.match(reason, /一意に選択できません/);
-  await f.queue.runLoopStep();
-  assert.equal(f.queue.currentAction, reason);
+  assert.equal(f.queue.isPaused, false);
+  assert.equal(sent, '/deepresearch 調査');
+  assert.equal(f.queue.isResearchWaiting(), false);
+  await f.queue.toolLogTask;
+  assert.match(f.data[`cgq_tool_errors_${f.queue.tabId}`][0].message, /一意に選択できません/);
 });
 
 test('/newchat is executed locally, then ordered prompts and settings resume in the new chat', async t => {
@@ -198,14 +201,86 @@ test('a confirmed Research queue submission arms the wait before processing its 
   assert.equal(f.queue.items[0].text, 'Next prompt');
 });
 
-test('an unavailable text app request pauses without typing or losing the item', async t => {
+test('an unavailable text app request preserves its instructions and subsequent work continues', async t => {
   const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
-  await f.queue.enqueue('@MissingApp Question');
+  await f.queue.enqueueMany(['@MissingApp Question\nsecond line', 'Next question']);
   f.composerTools.query = async () => [];
-  f.HumanSimulator.typeText = () => assert.fail('must not type without requested app');
+  const sent = [];
+  f.HumanSimulator.typeText = async () => true;
+  f.HumanSimulator.clickSend = async text => { sent.push(text); return true; };
   await f.queue.runLoopStep();
-  assert.equal(f.queue.isPaused, true);
-  assert.equal(f.queue.items[0].text, '@MissingApp Question');
+  f.queue.lastSentTimestamp = 0;
+  await f.queue.runLoopStep();
+  assert.equal(f.queue.isPaused, false);
+  assert.deepEqual(sent, ['@MissingApp Question\nsecond line', 'Next question']);
+  assert.equal(f.queue.items.length, 0);
+});
+
+test('menu failure, lost selection and token insertion failure are optional; logging failure never blocks send', async t => {
+  for (const platform of ['chatgpt', 'gemini']) {
+  for (const stage of ['select', 'verify', 'input']) {
+    const f = fixture(t, { url: platform === 'gemini' ? 'https://gemini.google.com/app/test' : 'https://chatgpt.com/c/test',
+      html: '<textarea id="prompt-textarea"></textarea><div class="ql-editor" contenteditable="true" role="textbox"></div>' });
+    const tool = { platform, type: 'app', id: 'app://github', label: 'GitHub' };
+    await f.queue.enqueue('@GitHub Question');
+    f.composerTools.query = async () => [tool];
+    f.composerTools.prepare = async () => {
+      if (stage === 'select') throw new Error('menu failed');
+      return [f.window.document.createElement('span')];
+    };
+    f.HumanSimulator.typeText = async () => { if (stage === 'input') throw new Error('token lost'); return true; };
+    f.composerTools.capture = () => ({ text: '', tools: [] });
+    const originalGet = f.window.chrome.storage.local.get;
+    f.window.chrome.storage.local.get = async keys => {
+      if (keys.some(key => key.startsWith('cgq_tool_errors_'))) throw new Error('log storage unavailable');
+      return originalGet(keys);
+    };
+    let sent;
+    f.HumanSimulator.clickSend = async text => { sent = text; return true; };
+    await f.queue.runLoopStep();
+    await f.queue.toolLogTask;
+    assert.equal(f.queue.isPaused, false, stage);
+    assert.equal(sent, '@GitHub Question', stage);
+    assert.equal(f.queue.items.length, 0, stage);
+  }
+  }
+});
+
+test('optional resolution preserves a newly entered user draft and cancellation', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea>' });
+  f.composerTools.resolvePrompt = async () => ({ text: 'Question', tools: [] });
+  f.composerTools.prepare = async () => { throw new Error('draft appeared'); };
+  f.composerTools.capture = () => ({ text: 'User draft', tools: [] });
+  f.DOM.clearComposer = () => assert.fail('must not clear new user input');
+  assert.equal(await f.queue.preparePromptBestEffort('Question'), null);
+  f.composerTools.capture = () => ({ text: '', tools: [] });
+  assert.equal(await f.queue.preparePromptBestEffort('Question', [], () => true), null);
+});
+
+test('diagnostics are bounded per tab and never store prompt or answer text', async t => {
+  const f = fixture(t);
+  f.window.console.warn = () => {};
+  for (let i = 0; i < 103; i++) f.queue.logToolError('select', new Error(`failure ${i}`));
+  await f.queue.toolLogTask;
+  const entries = f.data[`cgq_tool_errors_${f.queue.tabId}`];
+  assert.equal(entries.length, 100);
+  assert.equal(entries[0].message, 'failure 3');
+  assert.equal(entries[99].message, 'failure 102');
+  assert.deepEqual(Object.keys(entries[0]).sort(), ['at', 'itemId', 'message', 'platform', 'stage']);
+});
+
+test('direct sending also tolerates unavailable skills and keeps the original multiline instructions', async t => {
+  const f = fixture(t, { html: '<textarea id="prompt-textarea"></textarea><button data-testid="send-button">Send</button>' });
+  f.composerTools.query = async () => [];
+  let sent;
+  f.HumanSimulator.clickSend = async text => { sent = text; return true; };
+  const prompt = '/my-skill 調査\n結果をまとめて';
+  const result = await f.queue.sendPrompt(prompt);
+  assert.equal(result.success, true);
+  assert.equal(sent, prompt);
+  assert.equal(f.queue.isPaused, false);
+  await f.queue.toolLogTask;
+  assert.equal(f.data[`cgq_tool_errors_${f.queue.tabId}`][0].stage, 'resolve');
 });
 
 test('native tool input failure pauses once and retains the complete queued prompt', async t => {
