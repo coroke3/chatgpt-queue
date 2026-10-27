@@ -241,7 +241,7 @@
           </div>
 
           <div class="cgq-chat-composer-box">
-            <textarea class="cgq-chat-textarea" id="single-chat-input" placeholder="キューに追加（Enter で追加・Shift+Enter で改行）" rows="1"></textarea>
+            <textarea class="cgq-chat-textarea" id="single-chat-input" placeholder="Enterで通常送信・Ctrl+Enterでキュー追加・Shift+Enterで改行" rows="1"></textarea>
             <div class="cgq-composer-actions">
               <!-- Model & Effort Selector Controls (ChatGPT Style Dropdown UI) -->
               <div class="cgq-composer-toolbar">
@@ -275,6 +275,7 @@
 
                 <!-- Bulk Add Button (1 prompt per line) -->
                 <button type="button" class="cgq-chatgpt-pill-btn" id="single-btn-newchat" title="キューの末尾に新しいチャットの開始を追加">/newchat</button>
+                <button type="button" class="cgq-chatgpt-pill-btn cgq-icon-only" id="single-btn-enqueue" title="キューに追加 (Ctrl+Enter / Cmd+Enter)" aria-label="キューに追加">＋</button>
                 <button type="button" class="cgq-chatgpt-pill-btn cgq-icon-only" id="single-btn-bulk-add" title="プロンプトを追加（複数行・一括入力）" aria-label="プロンプトを一括追加">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <line x1="8" y1="6" x2="21" y2="6"></line>
@@ -286,7 +287,7 @@
                   </svg>
                 </button>
               </div>
-              <button class="cgq-composer-send-btn" id="single-btn-send" title="キューに追加 (Enter)">
+              <button type="button" class="cgq-composer-send-btn" id="single-btn-send" title="通常送信 (Enter)">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                   <line x1="12" y1="19" x2="12" y2="5"></line>
                   <polyline points="5 12 12 5 19 12"></polyline>
@@ -533,17 +534,10 @@
                 </div>
               </div>
               <div class="cgq-settings-group">
-                <!-- enterToQueue -->
                 <div class="cgq-settings-row">
                   <div class="cgq-settings-info">
-                    <span class="cgq-settings-label">管理画面のEnterでキュー追加</span>
-                    <span class="cgq-settings-desc">Queue Managerの入力欄用です。ON: Enterでキュー追加 / OFF: Enterで改行。ChatGPT・Geminiの通常入力欄ではEnterで通常送信します。</span>
-                  </div>
-                  <div class="cgq-settings-control">
-                    <label class="cgq-switch">
-                      <input type="checkbox" id="setting-enter-queue">
-                      <span class="cgq-switch-track"></span>
-                    </label>
+                    <span class="cgq-settings-label">キー操作</span>
+                    <span class="cgq-settings-desc">Enterで通常送信、Ctrl+Enter / Cmd+Enterでキュー追加、Shift+Enterで改行します。</span>
                   </div>
                 </div>
 

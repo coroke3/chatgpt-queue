@@ -17,7 +17,7 @@ function fixture(t, { generating = false, platform = 'chatgpt' } = {}) {
   window.eval(fs.readFileSync(path.join(root, 'content.js'), 'utf8')
     .replaceAll('if (!e.isTrusted) return;', '')
     .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async () => {};')
-    .replace('  const queueManager = new QueueManager();', '  globalThis.__test = { QueueManager, QueueUI, DOM }; return;\n  const queueManager = new QueueManager();'));
+    .replace('  const queueManager = new QueueManager();', '  globalThis.__test = { QueueManager, QueueUI, DOM, composerTools }; return;\n  const queueManager = new QueueManager();'));
   const { QueueManager, QueueUI, DOM } = window.__test;
   const queue = new QueueManager(); queue.notify = () => {};
   const input = window.document.querySelector('textarea'), send = window.document.querySelector('button');
@@ -125,6 +125,50 @@ test('queue shortcuts preserve the composer on save failure and avoid duplicate 
   release(); await tick(); await tick();
   assert.deepEqual(Array.from(f.queue.items, x => x.text), ['Keep my draft']);
   assert.equal(f.input.value, 'New draft typed during save');
+});
+
+test('native Enter does not enqueue even a newchat command', async t => {
+  const f = fixture(t); f.ui.setupKeyboardShortcuts(); f.input.focus(); f.input.value = '/newchat';
+  const event = new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  f.input.dispatchEvent(event); await tick();
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(f.queue.items.length, 0);
+  f.window.__test.composerTools.menuOpen = () => true;
+  f.input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+  await tick(); await tick();
+  assert.equal(f.queue.items[0].text, '/newchat', 'explicit queue shortcut also works while the native slash menu is open');
+});
+
+test('direct sending bypasses the queue, keeps its pause state and preserves queued items', async t => {
+  for (const platform of ['chatgpt', 'gemini']) {
+    const f = fixture(t, { platform }); await f.queue.enqueue('Queued'); f.queue.isPaused = true;
+    let sent = 0;
+    f.window.__CGQ_HumanSimulator__.clickSend = async () => {
+      assert.equal(f.input.value, 'Direct\nmessage'); sent++; f.input.value = ''; return true;
+    };
+    const response = await f.queue.sendPrompt('Direct\nmessage');
+    assert.equal(response.success, true); assert.equal(sent, 1);
+    assert.equal(f.queue.items[0].text, 'Queued'); assert.equal(f.queue.isPaused, true);
+    assert.equal(f.store[f.queue.storageKeyQueue].length, 1);
+    f.queue.isPaused = false;
+    await f.queue.runLoopStep(); assert.equal(sent, 1, 'manual sends retain the automatic send cooldown');
+  }
+});
+
+test('direct sending refuses busy composers and source drafts, and never clicks the generation stop button', async t => {
+  const f = fixture(t); await f.queue.enqueue('Queued');
+  f.input.value = 'Source draft';
+  assert.equal((await f.queue.sendPrompt('Direct')).success, false);
+  assert.equal(f.input.value, 'Source draft');
+  f.input.value = ''; f.queue.manualSending = true;
+  assert.equal((await f.queue.sendPrompt('Duplicate')).success, false);
+  f.queue.manualSending = false;
+  f.send.className = 'stop-button'; f.send.setAttribute('aria-label', '停止');
+  let clicked = false; f.send.onclick = () => { clicked = true; };
+  const response = await f.queue.sendPrompt('Direct');
+  assert.equal(response.success, false); assert.equal(clicked, false);
+  assert.equal(f.input.value, 'Direct'); assert.equal(f.queue.items.length, 1);
+  assert.equal(f.queue.isPaused, true, 'failed manual text is not later sent by the queue as an idle draft');
 });
 
 test('ChatGPT native send and form submit pass through during generation without being queued', async t => {

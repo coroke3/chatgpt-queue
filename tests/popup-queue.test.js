@@ -50,3 +50,21 @@ test('popup retains failed additions, blocks repeat clicks and clears only confi
   await tick();
   assert.equal(f.input.value, '');
 });
+
+test('popup Enter sends directly while Ctrl/Cmd+Enter queue, with newline and IME preserved', async t => {
+  const f = await fixture(t);
+  const key = extra => {
+    const event = new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...extra });
+    f.input.dispatchEvent(event); return event;
+  };
+  f.input.value = 'Direct'; key();
+  assert.equal(f.pending[0].message.action, 'SEND_PROMPT_TO_TAB');
+  f.pending.shift().callback({ success: true });
+  for (const modifier of ['ctrlKey', 'metaKey']) {
+    f.input.value = 'Queue'; key({ [modifier]: true });
+    assert.equal(f.pending[0].message.action, 'ADD_TO_TAB_QUEUE');
+    f.pending.shift().callback({ success: true });
+  }
+  for (const extra of [{ shiftKey: true }, { isComposing: true }, { ctrlKey: true, isComposing: true }]) assert.equal(key(extra).defaultPrevented, false);
+  assert.equal(f.pending.length, 0);
+});

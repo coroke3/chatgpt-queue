@@ -178,14 +178,19 @@
       align-items: center;
       justify-content: space-between;
       margin-top: 6px;
+      gap: 8px;
     }
 
     .input-hint {
+      flex: 1;
+      min-width: 0;
       font-size: 10px;
       color: var(--text-muted);
     }
 
     .btn-add {
+      flex-shrink: 0;
+      white-space: nowrap;
       padding: 5px 12px;
       background: var(--btn-primary);
       color: var(--btn-primary-text);
@@ -263,11 +268,11 @@
     <span class="section-status" id="stat-items">未接続</span>
   </div>
 
-  <textarea id="popup-input" placeholder="キューに追加するプロンプトを入力..."></textarea>
+  <textarea id="popup-input" placeholder="プロンプトを入力..."></textarea>
 
   <div class="input-actions">
-    <span class="input-hint">Enter で追加</span>
-    <button class="btn-add" id="btn-add" type="button">追加</button>
+    <span class="input-hint">Enterで送信 / Ctrl+Enterでキュー追加</span>
+    <button class="btn-add" id="btn-add" type="button">＋ キュー</button>
   </div>
 
   <div class="footer-links">

@@ -2,7 +2,7 @@
  * ChatGPT Queue Assistant - Content Script
  * Supports independent per-tab queues (multiple tabs running in parallel),
  * real-time dashboard registry reporting, background tab execution,
- * Enter to Queue (Shift+Enter for newline), bulletproof generation detection,
+ * Enter sends normally; Ctrl/Cmd+Enter queues (Shift+Enter for newline),
  * realistic human typing with typo simulation, full IME protection,
  * and seamless dark/light theme switching.
  */
@@ -93,7 +93,6 @@
   const SESSION_KEY_CHAT_ROLLOVER = 'cgq_chat_rollover';
 
   const DEFAULT_SETTINGS = {
-    enterToQueue: true,         // Queue Manager input preference; native Enter always uses the service.
     minReadDelay: 2.5,          // seconds to wait after ChatGPT completely stops
     maxReadDelay: 4.5,          // seconds
     dynamicDelay: true,         // add slight reading delay for longer prior responses
@@ -2917,7 +2916,44 @@
     // キューが入力欄を使って自動入力・送信している間は、入力欄の内容はキューのものなので
     // ユーザーのEnter/送信クリックで横取り・クリアしない
     isComposerLocked() {
-      return this.currentState === QueueState.TYPING || this.currentState === QueueState.PRE_SEND;
+      return this.manualSending || this.currentState === QueueState.TYPING || this.currentState === QueueState.PRE_SEND;
+    }
+
+    async sendPrompt(text, options = {}) {
+      const clean = String(text || '').trim();
+      if (!clean) return { success: false, error: '入力欄が空です' };
+      if (this.isComposerLocked() || modelPicker.pending || composerTools.pending) return { success: false, error: '入力欄を使用中です。完了後にもう一度送信してください' };
+      if (DOM.getComposerText()) return { success: false, error: '対象タブに下書きがあります。先に対象タブで送信または削除してください' };
+      if (CGQComposerTools.parsePrompt(clean).action === 'newchat') return { success: false, error: '/newchat はCtrl+Enterでキューに追加してください' };
+      this.manualSending = true;
+      let entered = false;
+      try {
+        const resolved = await composerTools.resolvePrompt(clean, options.tools || []);
+        const tokens = resolved.tools.length
+          ? await composerTools.prepare(resolved.tools)
+          : composerTools.nativeTokens().map(token => token.el.cloneNode(true));
+        const input = DOM.getPromptInput();
+        if (!input) throw new Error('対象タブの入力欄が見つかりません');
+        HumanSimulator.setDOMContent(input, resolved.text, tokens);
+        entered = true;
+        await sleep(100);
+        const button = DOM.getSendButton();
+        if (!button || button.matches('button[data-testid*="stop" i], button[aria-label*="Stop" i], button[aria-label*="停止"], button[aria-label*="中断"], button.stop-button') || button.querySelector('rect')) {
+          throw new Error('現在は通常送信できません。対象タブの入力欄を確認してください');
+        }
+        this.sendingNow = true;
+        if (!await HumanSimulator.clickSend(resolved.text)) throw new Error('送信を確認できません。対象タブで送信状況を確認してください');
+        this.lastSentTimestamp = Date.now();
+        this.lastSentPrompt = resolved.text;
+        return { success: true };
+      } catch (error) {
+        if (entered && this.items.length) this.isPaused = true;
+        return { success: false, error: error.message };
+      } finally {
+        this.sendingNow = false;
+        this.manualSending = false;
+        this.notify();
+      }
     }
 
     isBusy() {
@@ -3433,6 +3469,7 @@
         const loopInterval = document.hidden ? (isIdle ? 2500 : 1000) : (isIdle ? 1000 : 400);
         await sleep(loopInterval);
         await this.checkUrlChange();
+        if (this.manualSending) continue;
 
         if (this.editingItemId && this.items.some(item => item.id === this.editingItemId)) {
           this.setState(QueueState.WAITING_GENERATION, 'キューのプロンプトを編集中...');
@@ -3496,7 +3533,7 @@
 
         for (let check = 0; check < checkCount; check++) {
           await sleep(checkDelay);
-          if (DOM.getConversationLimitWarning() || DOM.getResearchPlanAction() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
+          if (this.manualSending || DOM.getConversationLimitWarning() || DOM.getResearchPlanAction() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
             stable = false;
             break;
           }
@@ -3623,7 +3660,7 @@
           try { switched = await DOM.switchReasoningEffort(nextItem.effort); } catch (e) { switched = false; }
           if (!switched) showToast(`思考設定「${DOM.formatEffortLabel(nextItem.effort)}」を変更できなかったため、現在の設定のまま続行します`);
         }
-        if (this.isPaused || DOM.getResearchPlanAction() || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
+        if (this.manualSending || Date.now() - this.lastSentTimestamp < 4000 || this.isPaused || DOM.getResearchPlanAction() || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
 
         const draft = DOM.getComposerText();
         if (draft) {
@@ -4484,16 +4521,6 @@
         return true;
       };
 
-      // Preserve slash text so /newchat can be entered in the native composer.
-      const enqueueCommand = async e => {
-        const text = DOM.getComposerText();
-        if (CGQComposerTools.parsePrompt(text).action !== 'newchat') return false;
-        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-        if (!this.qm.isComposerLocked()) {
-          if (!await this.enqueueComposer()) return true;
-        }
-        return true;
-      };
       const recordNativeSend = () => {
         const text = DOM.getComposerText();
         if (!text) return;
@@ -4503,7 +4530,7 @@
         setTimeout(() => DOM.scrollToBottom(true), 150);
       };
       // 1. Enter key in composer:
-      // Native Enter sends normally; +, Ctrl/Cmd+Enter and Alt+Enter enqueue.
+      // Native Enter sends normally; + and Ctrl/Cmd+Enter enqueue.
       document.addEventListener('keydown', async (e) => {
         if (!e.isTrusted) return;
         if (this.qm.sendingNow) return;
@@ -4514,13 +4541,6 @@
 
         const isInputFocused = (document.activeElement === input || input.contains(document.activeElement));
         if (!isInputFocused) return;
-        const commandSubmit = e.key === 'Enter' && !e.shiftKey;
-        if (commandSubmit && CGQComposerTools.parsePrompt(DOM.getComposerText()).action === 'newchat') {
-          await enqueueCommand(e);
-          return;
-        }
-        if (composerTools.menuOpen()) return;
-
         // Ctrl + Enter or Cmd + Enter: 常に強制キュー追加
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
           if (swallowIfLocked(e)) return;
@@ -4536,6 +4556,8 @@
           return;
         }
 
+        if (composerTools.menuOpen()) return;
+
         // Enter key in composer
         if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
           if (swallowIfLocked(e)) return;
@@ -4543,17 +4565,6 @@
           return;
         }
 
-        // Alt + Enter fallback: 常に強制キュー追加
-        if (e.altKey && e.key === 'Enter') {
-          if (swallowIfLocked(e)) return;
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          const text = DOM.getComposerText();
-          if (text) {
-            if (!await this.enqueueComposer()) return;
-          }
-        }
       }, true);
 
       // 2. Click interceptor on native Send Button
@@ -4576,10 +4587,6 @@
         );
         if (isStopBtn) return;
 
-        if (CGQComposerTools.parsePrompt(DOM.getComposerText()).action === 'newchat') {
-          await enqueueCommand(e);
-          return;
-        }
 
         if (swallowIfLocked(e)) return;
 
@@ -4595,10 +4602,6 @@
         // キュー自身の送信（PRE_SEND中の sendBtn.click）は素通しする。
         // ここで止めると送信されず、入力欄の文字がキューに再追加されてしまう。
         if (this.qm.sendingNow) return;
-        if (CGQComposerTools.parsePrompt(DOM.getComposerText()).action === 'newchat') {
-          await enqueueCommand(e);
-          return;
-        }
         if (swallowIfLocked(e)) return;
 
         recordNativeSend();
@@ -4718,16 +4721,11 @@
             </button>
           </div>
           <div class="cgq-modal-body">
-            <!-- Enter to Queue setting -->
             <div class="cgq-form-row">
               <div>
-                <div style="font-weight: 600; font-size: 12px;">管理画面のEnterでキューに追加</div>
-                <div class="cgq-form-desc">この設定はQueue Managerの入力欄用です。ChatGPT・Geminiの通常入力欄はEnterで通常送信、＋またはCtrl+Enterでキュー追加、Shift+Enterで改行します。</div>
+                <div style="font-weight: 600; font-size: 12px;">キー操作</div>
+                <div class="cgq-form-desc">Enterで通常送信、＋またはCtrl+Enter / Cmd+Enterでキュー追加、Shift+Enterで改行します。</div>
               </div>
-              <label class="cgq-switch">
-                <input type="checkbox" id="cgq-set-enter-queue" ${s.enterToQueue !== false ? 'checked' : ''}>
-                <span class="cgq-slider"></span>
-              </label>
             </div>
 
             <!-- Theme selection -->
@@ -4894,7 +4892,6 @@
 
       modal.querySelector('#cgq-settings-save').onclick = () => {
         const newSettings = {
-          enterToQueue: modal.querySelector('#cgq-set-enter-queue').checked,
           themeMode: modal.querySelector('#cgq-set-theme').value,
           typingMode: modal.querySelector('#cgq-set-mode').value,
           simulateTypos: modal.querySelector('#cgq-set-typo').checked,
@@ -5017,6 +5014,10 @@
         settings: queueManager.settings,
         tabId: queueManager.tabId
       });
+    } else if (request.action === 'SEND_PROMPT_TO_TAB') {
+      queueManager.sendPrompt(request.text, { tools: request.tools }).then(sendResponse,
+        error => sendResponse({ success: false, error: error.message }));
+      return true;
     } else if (request.action === 'ADD_TO_TAB_QUEUE') {
       queueManager.enqueue(request.text, { tools: request.tools }).then(item => {
         sendResponse({ success: !!item, item });

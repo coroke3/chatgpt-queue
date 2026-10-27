@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       activeTabId = tab.id;
       if (popupInput) {
         popupInput.disabled = false;
-        popupInput.placeholder = 'キューに追加するプロンプトを入力...';
+        popupInput.placeholder = 'Enterで送信・Ctrl+Enterでキュー追加';
       }
       if (btnAdd) btnAdd.disabled = false;
 
@@ -55,18 +55,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Add prompt to active tab
   let adding = false;
-  const handleAdd = () => {
+  const handleAdd = (queue = true) => {
     if (!popupInput || !activeTabId || adding) return;
     const text = popupInput.value.trim();
     if (!text) return;
 
     adding = true;
     if (btnAdd) btnAdd.disabled = true;
-    chrome.tabs.sendMessage(activeTabId, { action: 'ADD_TO_TAB_QUEUE', text }, (response) => {
+    chrome.tabs.sendMessage(activeTabId, { action: queue ? 'ADD_TO_TAB_QUEUE' : 'SEND_PROMPT_TO_TAB', text }, (response) => {
       adding = false;
       if (btnAdd) btnAdd.disabled = false;
       if (chrome.runtime.lastError || !response?.success) {
-        if (statItems) statItems.textContent = '追加できませんでした。対象タブを再読み込みして再試行してください';
+        if (statItems) statItems.textContent = response?.error || '送信・追加できませんでした。対象タブで送信状況を確認してください';
         return;
       }
       if (popupInput.value.trim() === text) popupInput.value = '';
@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   if (btnAdd) {
-    btnAdd.addEventListener('click', handleAdd);
+    btnAdd.addEventListener('click', () => handleAdd(true));
   }
 
   if (popupInput) {
@@ -86,12 +86,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (isComposing || e.isComposing || e.keyCode === 229) return;
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        handleAdd();
+        handleAdd(true);
         return;
       }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        handleAdd();
+        handleAdd(false);
       }
     });
   }

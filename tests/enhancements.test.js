@@ -109,7 +109,7 @@ test('Queue Manager provides a comprehensive Settings screen with all controls a
   assert.ok(html.includes('id="setting-auto-reload"'), 'dashboard.html must have auto-reload toggle');
   assert.ok(html.includes('id="setting-min-read"'), 'dashboard.html must have min-read slider');
   assert.ok(html.includes('id="setting-max-read"'), 'dashboard.html must have max-read slider');
-  assert.ok(html.includes('id="setting-enter-queue"'), 'dashboard.html must have enter-queue toggle');
+  assert.ok(html.includes('Ctrl+Enter / Cmd+Enterでキュー追加'), 'dashboard.html must explain the fixed queue shortcut');
   assert.ok(html.includes('id="setting-theme-mode"'), 'dashboard.html must have theme-mode selector');
   assert.ok(html.includes('id="btn-settings-save"'), 'dashboard.html must have save button');
   assert.ok(html.includes('id="btn-settings-reset"'), 'dashboard.html must have reset button');
@@ -499,11 +499,11 @@ test('Auto-scroll detects bottom proximity correctly and avoids jumping when rea
   dom.window.close();
 });
 
-test('Queue Manager supports the multiline input preference and Ctrl+Enter', () => {
+test('Queue Manager uses normal Enter and Ctrl+Enter without a legacy queue preference', () => {
   // Check dashboard.js logic
   const dashJs = fs.readFileSync(path.join(root, 'dashboard.js'), 'utf8');
   assert.ok(dashJs.includes('hasCtrlOrMeta && isEnter'), 'dashboard.js must handle Ctrl/Cmd+Enter for sending');
-  assert.ok(dashJs.includes('currentSettings.enterToQueue === false'), 'dashboard.js must allow Enter for newline when enterToQueue is disabled');
+  assert.ok(!dashJs.includes('currentSettings.enterToQueue'), 'legacy preferences must not override Enter');
 
   // Check content.js logic
   const contentJs = fs.readFileSync(path.join(root, 'content.js'), 'utf8');

@@ -659,11 +659,11 @@ test('Queue Manager is flat: no shadows, no bounce or hover motion, feedback sta
   await tick();
   assert.ok(copyBtn.classList.contains('copied'), 'Copy button must receive the .copied feedback class on click');
 
-  // Test send button click animation feedback
-  const sendBtn = f.doc.getElementById('single-btn-send');
+  // Queue additions retain their feedback on the dedicated plus button.
+  const sendBtn = f.doc.getElementById('single-btn-enqueue');
   const input = f.doc.getElementById('single-chat-input');
   input.value = 'アニメーションテスト入力';
   sendBtn.click();
   await tick();
-  assert.ok(sendBtn.classList.contains('sent'), 'Send button must receive the .sent feedback class on submit');
+  assert.ok(sendBtn.classList.contains('sent'), 'Queue button must receive the .sent feedback class on submit');
 });

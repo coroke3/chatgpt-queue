@@ -1093,7 +1093,6 @@ document.addEventListener('DOMContentLoaded', () => {
     continuousFatigue: true,
     autoReloadOnDisconnect: true,
     disconnectReloadTimeout: 120,
-    enterToQueue: true,
     soundNotification: true,
     autoScroll: true,
     themeMode: 'auto',
@@ -1122,7 +1121,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const valRead = document.getElementById('setting-val-read');
     const setDynamic = document.getElementById('setting-dynamic-delay');
     const setFatigue = document.getElementById('setting-continuous-fatigue');
-    const setEnterQueue = document.getElementById('setting-enter-queue');
     const setAutoReload = document.getElementById('setting-auto-reload');
     const setSound = document.getElementById('setting-sound-notification');
     const setScroll = document.getElementById('setting-auto-scroll');
@@ -1144,7 +1142,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (setDynamic) setDynamic.checked = s.dynamicDelay !== false;
     if (setFatigue) setFatigue.checked = s.continuousFatigue !== false;
-    if (setEnterQueue) setEnterQueue.checked = s.enterToQueue !== false;
     if (setAutoReload) setAutoReload.checked = s.autoReloadOnDisconnect !== false;
     if (setSound) setSound.checked = s.soundNotification !== false;
     if (setScroll) setScroll.checked = s.autoScroll !== false;
@@ -1173,7 +1170,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const setMaxRead = document.getElementById('setting-max-read');
     const setDynamic = document.getElementById('setting-dynamic-delay');
     const setFatigue = document.getElementById('setting-continuous-fatigue');
-    const setEnterQueue = document.getElementById('setting-enter-queue');
     const setAutoReload = document.getElementById('setting-auto-reload');
     const setSound = document.getElementById('setting-sound-notification');
     const setScroll = document.getElementById('setting-auto-scroll');
@@ -1190,7 +1186,6 @@ document.addEventListener('DOMContentLoaded', () => {
       maxReadDelay: setMaxRead ? parseFloat(setMaxRead.value) : 4.5,
       dynamicDelay: setDynamic ? setDynamic.checked : true,
       continuousFatigue: setFatigue ? setFatigue.checked : true,
-      enterToQueue: setEnterQueue ? setEnterQueue.checked : true,
       autoReloadOnDisconnect: setAutoReload ? setAutoReload.checked : true,
       soundNotification: setSound ? setSound.checked : true,
       autoScroll: setScroll ? setScroll.checked : true,
@@ -1269,7 +1264,6 @@ document.addEventListener('DOMContentLoaded', () => {
       'setting-typing-jitter',
       'setting-dynamic-delay',
       'setting-continuous-fatigue',
-      'setting-enter-queue',
       'setting-auto-reload',
       'setting-sound-notification',
       'setting-auto-scroll',
@@ -1385,7 +1379,7 @@ document.addEventListener('DOMContentLoaded', () => {
     singleChatStatus.className = `cgq-chat-status-pill ${dotClass}`;
     singleChatStatusText.textContent = statusLabel;
 
-    [singleChatInput, singleBtnSend, singleBtnPause, singleModelPillBtn].forEach(el => {
+    [singleChatInput, singleBtnSend, document.getElementById('single-btn-enqueue'), singleBtnPause, singleModelPillBtn].forEach(el => {
       if (el) el.disabled = !!t.needsConnection;
     });
     if (!singleChatInput.dataset.defaultPlaceholder) singleChatInput.dataset.defaultPlaceholder = singleChatInput.placeholder;
@@ -1787,7 +1781,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (items.length === 0) {
       singleQueueList.innerHTML = `
         <div style="padding: 10px 0; font-size: 13px; color: var(--text-muted); text-align: center;">
-          待機中のキューはありません。下の入力欄から Enter で追加できます。
+          待機中のキューはありません。Ctrl+Enter / Cmd+Enter または＋で追加できます。
         </div>
       `;
       return;
@@ -2022,7 +2016,41 @@ document.addEventListener('DOMContentLoaded', () => {
   // --------------------------------------------------------------------------
   let isSingleComposing = false;
 
+  const directSending = new Set();
+  const sendDirect = (tabId, input, toolInput) => {
+    const t = cachedTabsData.get(tabId);
+    const text = input.value.trim();
+    if (!text || directSending.has(tabId)) return;
+    if (!t?.chromeTabId || t.needsConnection) { showToast('対象タブを再読み込みして接続してください'); return; }
+    if (modelRequests.has(tabId)) { showToast('モデルの確認が終わってから送信してください'); return; }
+    directSending.add(tabId);
+    const finish = response => {
+      const error = chrome.runtime.lastError;
+      directSending.delete(tabId);
+      if (error || !response?.success) { showToast(response?.error || '送信できませんでした。対象タブで送信状況を確認してください'); return; }
+      const sameScope = input.id !== 'single-chat-input' || selectedTabId === tabId;
+      if (sameScope && input.value.trim() === text) {
+        input.value = '';
+        fitInput(input, 160);
+        tabInputDrafts.delete(tabId);
+        toolInput.clear();
+      } else if (!sameScope && tabInputDrafts.get(tabId)?.trim() === text) {
+        tabInputDrafts.delete(tabId);
+        toolDrafts.delete(tabId);
+      }
+      const button = input.id === 'single-chat-input' ? singleBtnSend : input.closest('.cgq-tab-card')?.querySelector('.btn-add-prompt');
+      if (sameScope && button) {
+        button.classList.add('sent');
+        setTimeout(() => button.classList.remove('sent'), 350);
+      }
+      showToast('送信しました');
+    };
+    try { chrome.tabs.sendMessage(t.chromeTabId, { action: 'SEND_PROMPT_TO_TAB', text, tools: toolInput.getTools() }, finish); }
+    catch (error) { directSending.delete(tabId); showToast('対象タブに接続できません。入力内容を保持しています'); }
+  };
+
   const submitSingleAdd = () => {
+    if (directSending.has(selectedTabId)) return;
     if (!selectedTabId) return;
     if (modelRequests.has(selectedTabId)) {
       showToast('モデルの確認が終わってからキューに追加してください。');
@@ -2035,9 +2063,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const model = selectedModelOverride[selectedTabId] || modelData?.activeModelId || (singleModelSelect ? singleModelSelect.value : 'auto');
       const effort = selectedEffortOverride[selectedTabId] || modelData?.activeEffortId || (singleEffortSelect ? singleEffortSelect.value : 'auto');
       if (!sendRemoteCommand(selectedTabId, { action: 'ENQUEUE', text, model, effort, tools: singleToolInput.getTools() })) return;
-      if (singleBtnSend) {
-        singleBtnSend.classList.add('sent');
-        setTimeout(() => singleBtnSend.classList.remove('sent'), 350);
+      const button = document.getElementById('single-btn-enqueue');
+      if (button) {
+        button.classList.add('sent');
+        setTimeout(() => button.classList.remove('sent'), 350);
       }
       singleChatInput.value = '';
       fitSingleInput();
@@ -2112,16 +2141,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (isEnter && !e.shiftKey) {
-      if (currentSettings.enterToQueue === false) {
-        // enterToQueue が OFF の場合は Enter で改行を許容（複数行の長文・命令入力をスムーズに行えるようにする）
-        return;
-      }
       e.preventDefault();
-      submitSingleAdd();
+      sendDirect(selectedTabId, singleChatInput, singleToolInput);
     }
   });
 
-  singleBtnSend.addEventListener('click', submitSingleAdd);
+  singleBtnSend.addEventListener('click', () => sendDirect(selectedTabId, singleChatInput, singleToolInput));
+  document.getElementById('single-btn-enqueue')?.addEventListener('click', submitSingleAdd);
 
   // --------------------------------------------------------------------------
   // Mode 2: Multi-Chat Parallel Grid Mode (横並び並列表示モード)
@@ -2178,7 +2204,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateCardConnection(card, t) {
     const tabId = t.tabId;
-    card.querySelectorAll('.cgq-dash-prompt-input, .btn-add-prompt, .btn-toggle-pause, .btn-clear-queue, .card-model-pill')
+    card.querySelectorAll('.cgq-dash-prompt-input, .btn-add-prompt, .btn-enqueue-prompt, .btn-toggle-pause, .btn-clear-queue, .card-model-pill')
       .forEach(el => { el.disabled = !!t.needsConnection; });
     const input = card.querySelector('.cgq-dash-prompt-input');
     let toolInput = cardToolInputs.get(card);
@@ -2191,7 +2217,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (toolInput) {
       toolInput.sync();
     }
-    if (input) input.placeholder = t.needsConnection ? '対象タブを再読み込みして接続してください' : 'キューに追加 (Enter)';
+    if (input) input.placeholder = t.needsConnection ? '対象タブを再読み込みして接続してください' : 'Enterで送信・Ctrl+Enterでキュー追加';
   }
 
   function createCardElement(t, now) {
@@ -2269,7 +2295,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="cgq-tab-card-footer">
         <div class="cgq-card-queue-slot">${buildQueueHtml(t)}</div>
         <div class="cgq-dash-input-row">
-          <textarea class="cgq-dash-prompt-input" data-tab-id="${t.tabId}" placeholder="キューに追加 (Enter)" rows="1">${escapeHtml(tabInputDrafts.get(t.tabId) || '')}</textarea>
+          <textarea class="cgq-dash-prompt-input" data-tab-id="${t.tabId}" placeholder="Enterで送信・Ctrl+Enterでキュー追加" rows="1">${escapeHtml(tabInputDrafts.get(t.tabId) || '')}</textarea>
           <div class="cgq-composer-actions">
             <div class="cgq-card-composer-toolbar">
               <div class="cgq-dropdown-wrapper">
@@ -2314,6 +2340,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
 
               <!-- Card Bulk Add Button (1 prompt per line) -->
+              <button type="button" class="cgq-chatgpt-pill-btn sm cgq-icon-only btn-enqueue-prompt" title="キューに追加 (Ctrl+Enter / Cmd+Enter)" aria-label="キューに追加">＋</button>
               <button type="button" class="cgq-chatgpt-pill-btn sm cgq-icon-only card-bulk-add-btn" data-tab-id="${t.tabId}" title="プロンプトを追加（複数行・一括入力）" aria-label="プロンプトを一括追加">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <line x1="8" y1="6" x2="21" y2="6"></line>
@@ -2325,7 +2352,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   </svg>
                 </button>
             </div>
-            <button class="btn-add-prompt" title="このタブのキューに追加 (Enter)">
+            <button type="button" class="btn-add-prompt" title="通常送信 (Enter)">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <line x1="12" y1="19" x2="12" y2="5"></line>
                 <polyline points="5 12 12 5 19 12"></polyline>
@@ -2774,7 +2801,7 @@ a{color:inherit}
         <div class="cgq-panel-list">
           ${items.length === 0 ? `
             <div style="padding: 24px 10px; font-size: 12.5px; color: var(--text-muted); text-align: center;">
-              待機中のキューはありません。下の入力欄から Enter で追加できます。
+              待機中のキューはありません。Ctrl+Enter / Cmd+Enter または＋で追加できます。
             </div>
           ` : items.map(item => buildQueueItemHtml(item, t.tabId)).join('')}
         </div>
@@ -3081,6 +3108,7 @@ a{color:inherit}
     let isComposing = false;
 
     const submitAdd = () => {
+      if (directSending.has(tabId)) return;
       if (modelRequests.has(tabId)) {
         showToast('モデルの確認が終わってからキューに追加してください。');
         return;
@@ -3092,9 +3120,10 @@ a{color:inherit}
         const model = selectedModelOverride[tabId] || cardModelSelections[tabId]?.model || modelData?.activeModelId || 'auto';
         const effort = selectedEffortOverride[tabId] || cardModelSelections[tabId]?.effort || modelData?.activeEffortId || 'auto';
         if (!sendRemoteCommand(tabId, { action: 'ENQUEUE', text, model, effort, tools: toolInput.getTools() })) return;
-        if (addBtn) {
-          addBtn.classList.add('sent');
-          setTimeout(() => addBtn.classList.remove('sent'), 350);
+        const button = card.querySelector('.btn-enqueue-prompt');
+        if (button) {
+          button.classList.add('sent');
+          setTimeout(() => button.classList.remove('sent'), 350);
         }
         input.value = '';
         fitInput(input, 100);
@@ -3127,17 +3156,15 @@ a{color:inherit}
         }
 
         if (isEnter && !e.shiftKey) {
-          if (currentSettings.enterToQueue === false) {
-            // enterToQueue が OFF の場合は Enter で改行を許容（複数行の長文・命令入力をスムーズに行えるようにする）
-            return;
-          }
           e.preventDefault();
-          submitAdd();
+          sendDirect(tabId, input, toolInput);
         }
       });
     }
 
-    if (addBtn) addBtn.onclick = submitAdd;
+    if (addBtn) addBtn.onclick = () => sendDirect(tabId, input, toolInput);
+    const enqueueBtn = card.querySelector('.btn-enqueue-prompt');
+    if (enqueueBtn) enqueueBtn.onclick = submitAdd;
   }
 
   function bindQueueItemEvents(card, tabId) {
