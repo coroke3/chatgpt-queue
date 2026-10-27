@@ -125,7 +125,7 @@ test('dashboard bulk input forwards directives verbatim and ignores IME confirma
     runtime: { sendMessage: command => commands.push(command) },
     storage: { local: { get: async () => ({ cgq_tabs_registry: { tab_1: tab } }), set: async values => commands.push(...Object.values(values)) }, onChanged: { addListener() {} } },
     tabs: { query: (options, reply) => reply([{ id: 1, title: tab.title, url: tab.url }]),
-      sendMessage: (id, request, reply) => reply({ success: true, state: tab }) }
+      sendMessage: (id, request, reply) => { commands.push(request); reply({ success: true, state: tab }); } }
   };
   for (const file of ['references.js', 'composer-tools.js', 'dashboard.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
   await new Promise(resolve => setImmediate(resolve));
@@ -135,16 +135,18 @@ test('dashboard bulk input forwards directives verbatim and ignores IME confirma
   const multiline = '/deepresearch\n公式資料を使ってください。\n\n出典を記載してください。';
   input.value = multiline;
   window.document.getElementById('bulk-modal-submit').click();
-  assert.deepEqual(Array.from(commands.find(cmd => cmd.action === 'ENQUEUE_MANY').texts), [multiline]);
+  assert.deepEqual(Array.from(commands.find(cmd => cmd.action === 'ADD_MANY_TO_TAB_QUEUE').texts), [multiline]);
+  await new Promise(resolve => setImmediate(resolve));
   commands.length = 0;
   window.document.getElementById('nav-bulk-add').click();
   window.document.getElementById('bulk-modal-delimiter').value = 'line';
   input.value = 'Question\n/newchat\n@GitHub Review';
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true, bubbles: true }));
-  assert.equal(commands.some(cmd => cmd.action === 'ENQUEUE_MANY'), false);
+  assert.equal(commands.some(cmd => cmd.action === 'ADD_MANY_TO_TAB_QUEUE'), false);
   window.document.getElementById('bulk-modal-submit').click();
-  const bulk = commands.find(cmd => cmd.action === 'ENQUEUE_MANY');
+  const bulk = commands.find(cmd => cmd.action === 'ADD_MANY_TO_TAB_QUEUE');
   assert.ok(bulk, JSON.stringify(commands));
   assert.deepEqual(Array.from(bulk.texts), ['Question', '/newchat', '@GitHub Review']);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(window.document.getElementById('dashboard-bulk-modal').style.display, 'none');
 });

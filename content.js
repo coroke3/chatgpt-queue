@@ -2237,50 +2237,31 @@
       return nodes[nodes.length - 1] || null;
     }
 
-    // Sent when conversation gained user message, generation started, or stop button appeared.
-    static async confirmSent(prompt, beforeLast, timeoutMs = 8000) {
+    static hasSendEvidence(prompt, beforeLast, beforeText = String(beforeLast?.innerText || beforeLast?.textContent || '').replace(/\s+/g, ' ').trim()) {
       const norm = value => String(value || '').replace(/\s+/g, ' ').trim();
-      const probe = norm(prompt).slice(0, 40);
+      const expected = norm(prompt);
+      const last = HumanSimulator.lastUserNode();
+      const actual = norm(last?.innerText || last?.textContent);
+      const changed = last && (last !== beforeLast || actual !== beforeText);
+      if (expected && changed && actual.includes(expected)) return true;
+      return !norm(DOM.getComposerText()) && DOM.isGenerating();
+    }
+
+    // Historical identical messages and a cleared editor alone are not delivery receipts.
+    static async confirmSent(prompt, beforeLast, timeoutMs = 8000, beforeText = String(beforeLast?.innerText || beforeLast?.textContent || '').replace(/\s+/g, ' ').trim()) {
       const until = Date.now() + timeoutMs;
       while (Date.now() < until) {
-        // 1. Generation started -> prompt was definitely accepted and sent!
-        if (DOM.isGenerating()) return true;
-
-        // 2. Stop button or rect appeared -> definitely generating!
-        const sendBtn = DOM.getSendButton();
-        if (sendBtn && (sendBtn.matches?.('button[data-testid*="stop" i], button[aria-label*="Stop" i], button[aria-label*="停止" i], button[aria-label*="中断" i], button[aria-label*="ストップ" i]') || sendBtn.querySelector?.('rect'))) {
-          return true;
-        }
-
-        // 3. User message node added / updated
-        const last = HumanSimulator.lastUserNode();
-        if (last) {
-          const text = norm(last.innerText || last.textContent);
-          if (probe && text.includes(probe)) return true;
-          if (last !== beforeLast && text.length > 0) return true;
-        }
-
-        // 4. Fallback: Composer is cleared after being typed
-        const composerText = norm(DOM.getComposerText());
-        if (!composerText && (DOM.isGenerating() || (last && last !== beforeLast) || (Date.now() > until - timeoutMs + 1000))) {
-          return true;
-        }
-
+        if (HumanSimulator.hasSendEvidence(prompt, beforeLast, beforeText)) return true;
         await sleep(120);
       }
-
-      // Final post-timeout check: if active generation is now ongoing or composer cleared, treat as sent
-      if (DOM.isGenerating()) return true;
-      const last = HumanSimulator.lastUserNode();
-      if (last && probe && norm(last.innerText || last.textContent).includes(probe)) return true;
-      if (!norm(DOM.getComposerText())) return true;
-
-      return false;
+      return HumanSimulator.hasSendEvidence(prompt, beforeLast, beforeText);
     }
 
     static async clickSend(prompt) {
       const beforeLast = HumanSimulator.lastUserNode();
+      const beforeText = String(beforeLast?.innerText || beforeLast?.textContent || '').replace(/\s+/g, ' ').trim();
       const input = DOM.getPromptInput();
+      if (DOM.isGenerating()) return false;
 
       const isButtonDisabled = (btn) => {
         if (!btn) return true;
@@ -2318,17 +2299,24 @@
 
       // A disabled control is a service-side readiness gate. Never bypass it
       // through clicks, form submission or synthetic Enter events.
-      if (isButtonDisabled(sendBtn)) return false;
+      const canRetry = () => {
+        const button = DOM.getSendButton();
+        return !DOM.isGenerating() && !isButtonDisabled(button) &&
+          !button.matches('button[data-testid*="stop" i], button[aria-label*="Stop" i], button[aria-label*="停止"], button[aria-label*="中断"]') &&
+          !button.querySelector('rect') && String(DOM.getComposerText()).replace(/\s+/g, ' ').trim() === String(prompt).replace(/\s+/g, ' ').trim();
+      };
+      if (!canRetry()) return false;
 
       // 3. Primary attempt: Click the send button if present
       if (sendBtn) {
         triggerFullClick(sendBtn);
 
-        const sentQuick = await HumanSimulator.confirmSent(prompt, beforeLast, 2000);
+        const sentQuick = await HumanSimulator.confirmSent(prompt, beforeLast, 2000, beforeText);
         if (sentQuick) return true;
       }
 
       // 4. Secondary attempt: Form requestSubmit
+      if (!canRetry()) return HumanSimulator.hasSendEvidence(prompt, beforeLast, beforeText);
       const form = input?.closest('form') || sendBtn?.closest('form') || document.querySelector('form');
       if (form) {
         try {
@@ -2339,11 +2327,12 @@
           }
         } catch (e) {}
 
-        const sentForm = await HumanSimulator.confirmSent(prompt, beforeLast, 2000);
+        const sentForm = await HumanSimulator.confirmSent(prompt, beforeLast, 2000, beforeText);
         if (sentForm) return true;
       }
 
       // 5. Tertiary attempt: Keyboard Enter on the input element
+      if (!canRetry()) return HumanSimulator.hasSendEvidence(prompt, beforeLast, beforeText);
       if (input) {
         input.focus();
         try {
@@ -2370,7 +2359,7 @@
       }
 
       // 6. Final confirmation wait
-      return await HumanSimulator.confirmSent(prompt, beforeLast, 4500);
+      return await HumanSimulator.confirmSent(prompt, beforeLast, 4500, beforeText);
     }
   }
 
@@ -2993,7 +2982,7 @@
     // キューが入力欄を使って自動入力・送信している間は、入力欄の内容はキューのものなので
     // ユーザーのEnter/送信クリックで横取り・クリアしない
     isComposerLocked() {
-      return this.manualSending || this.currentState === QueueState.TYPING || this.currentState === QueueState.PRE_SEND;
+      return this.manualSending || this.composerEnqueuePending || this.currentState === QueueState.TYPING || this.currentState === QueueState.PRE_SEND;
     }
 
     async sendPrompt(text, options = {}) {
@@ -3567,7 +3556,7 @@
         const loopInterval = document.hidden ? (isIdle ? 2500 : 1000) : (isIdle ? 1000 : 400);
         await sleep(loopInterval);
         await this.checkUrlChange();
-        if (this.manualSending) continue;
+        if (this.manualSending || this.composerEnqueuePending) continue;
 
         if (this.editingItemId && this.items.some(item => item.id === this.editingItemId)) {
           this.setState(QueueState.WAITING_GENERATION, 'キューのプロンプトを編集中...');
@@ -3631,7 +3620,7 @@
 
         for (let check = 0; check < checkCount; check++) {
           await sleep(checkDelay);
-          if (this.manualSending || DOM.getConversationLimitWarning() || this.isResearchWaiting() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
+          if (this.manualSending || this.composerEnqueuePending || DOM.getConversationLimitWarning() || this.isResearchWaiting() || DOM.isGenerating() || !DOM.getPromptInput() || this.isPaused || this.items.length === 0) {
             stable = false;
             break;
           }
@@ -3758,7 +3747,7 @@
           try { switched = await DOM.switchReasoningEffort(nextItem.effort); } catch (e) { switched = false; }
           if (!switched) showToast(`思考設定「${DOM.formatEffortLabel(nextItem.effort)}」を変更できなかったため、現在の設定のまま続行します`);
         }
-        if (this.manualSending || Date.now() - this.lastSentTimestamp < 4000 || this.isPaused || this.isResearchWaiting() || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
+        if (this.manualSending || this.composerEnqueuePending || Date.now() - this.lastSentTimestamp < 4000 || this.isPaused || this.isResearchWaiting() || DOM.isGenerating() || !this.items.length || this.items[0].id !== nextItem.id) continue;
 
         const draft = DOM.getComposerText();
         if (draft) {
@@ -3904,6 +3893,8 @@
         this.notify();
 
         let sent = false;
+        const sendBaseline = HumanSimulator.lastUserNode();
+        const sendBaselineText = String(sendBaseline?.innerText || sendBaseline?.textContent || '').replace(/\s+/g, ' ').trim();
         this.sendingNow = true;
         try {
           sent = await HumanSimulator.clickSend(resolvedPrompt.text);
@@ -3919,21 +3910,7 @@
         // before treating that bubble as confirmation and removing the item.
         if (await this.checkConversationLimitAndStartNewChat()) continue;
 
-        // Failsafe confirmation: 送信ボタン押下後に回答生成が開始されたか、または最新ターンに対象プロンプトが存在すれば送信成功として扱う
-        if (!sent) {
-          if (DOM.isGenerating()) {
-            sent = true;
-          } else {
-            const norm = v => String(v || '').replace(/\s+/g, ' ').trim();
-            const probe = norm(resolvedPrompt.text).slice(0, 30);
-            const latestTurn = DOM.extractLatestTurn?.();
-            if (latestTurn && latestTurn.prompt && norm(latestTurn.prompt).includes(probe)) {
-              sent = true;
-            } else if (!norm(DOM.getComposerText()) && this.lastSentPrompt === resolvedPrompt.text) {
-              sent = true;
-            }
-          }
-        }
+        if (!sent) sent = HumanSimulator.hasSendEvidence(resolvedPrompt.text, sendBaseline, sendBaselineText);
 
         if (sent) {
           this.recordResearchSend(selectedTools);
@@ -3969,6 +3946,14 @@
         } else {
           // Not confirmed as sent. Retry once; if it fails again, pause and keep the item
           // so the same prompt is not re-sent endlessly (or duplicated).
+          const norm = text => String(text || '').replace(/\s+/g, ' ').trim();
+          if (norm(DOM.getComposerText()) !== norm(resolvedPrompt.text)) {
+            this.isPaused = true;
+            this.setState(QueueState.PAUSED, '送信を確認できず入力欄も変化しました。キューと入力を保持しました。対象タブで送信状況を確認してください');
+            continue;
+          }
+          if (this.failedItemId !== nextItem.id) this.sendFailures = 0;
+          this.failedItemId = nextItem.id;
           this.sendFailures = (this.sendFailures || 0) + 1;
           if (this.sendFailures >= 2) {
             this.sendFailures = 0;
@@ -4026,6 +4011,7 @@
       const text = DOM.getComposerText();
       if (!text) return false;
       this.enqueuePending = true;
+      this.qm.composerEnqueuePending = true;
       try {
         const item = await this.qm.enqueue(text, { tools: composerTools.capture().tools });
         if (!item) return false;
@@ -4034,6 +4020,7 @@
         return true;
       } finally {
         this.enqueuePending = false;
+        this.qm.composerEnqueuePending = false;
       }
     }
 
@@ -4653,7 +4640,7 @@
       };
 
       const swallowIfLocked = (e) => {
-        if (!this.qm.isComposerLocked()) return false;
+        if (!this.qm.isComposerLocked() && !this.enqueuePending) return false;
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -5109,6 +5096,11 @@
   }
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (['SEND_PROMPT_TO_TAB', 'ADD_TO_TAB_QUEUE', 'ADD_MANY_TO_TAB_QUEUE'].includes(request.action) &&
+        ((request.expectedTabId && request.expectedTabId !== queueManager.tabId) || extractConversationId(window.location.href) !== queueManager.conversationId)) {
+      sendResponse({ success: false, error: '会話が切り替わりました。対象を確認して再試行してください' });
+      return false;
+    }
     if (request.action === 'GET_OLDER_HISTORY') {
       getOlderHistory(Number(request.have) || 0)
         .then(sendResponse, error => sendResponse({ success: false, error: error.message }));
@@ -5160,14 +5152,14 @@
         error => sendResponse({ success: false, error: error.message }));
       return true;
     } else if (request.action === 'ADD_TO_TAB_QUEUE') {
-      queueManager.enqueue(request.text, { tools: request.tools }).then(item => {
+      queueManager.enqueue(request.text, { tools: request.tools, model: request.model, effort: request.effort }).then(item => {
         sendResponse({ success: !!item, item });
-      });
+      }, error => sendResponse({ success: false, error: error.message }));
       return true;
     } else if (request.action === 'ADD_MANY_TO_TAB_QUEUE') {
-      queueManager.enqueueMany(request.texts, { tools: request.tools }).then(items => {
+      queueManager.enqueueMany(request.texts, { tools: request.tools, model: request.model, effort: request.effort }).then(items => {
         sendResponse({ success: items.length > 0, items });
-      });
+      }, error => sendResponse({ success: false, error: error.message }));
       return true;
     }
   });

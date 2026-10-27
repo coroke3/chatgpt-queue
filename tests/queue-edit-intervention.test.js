@@ -184,6 +184,41 @@ test('ChatGPT native send and form submit pass through during generation without
   assert.ok(f.queue.lastSentTimestamp > 0);
 });
 
+test('native normal send waits while the same composer is being saved to the queue', t => {
+  const f = fixture(t);
+  f.ui.setupKeyboardShortcuts();
+  f.ui.enqueuePending = true;
+  f.input.focus(); f.input.value = 'Still saving';
+  const enter = new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  f.input.dispatchEvent(enter);
+  assert.equal(enter.defaultPrevented, true);
+  const click = new f.window.MouseEvent('click', { bubbles: true, cancelable: true });
+  f.send.dispatchEvent(click);
+  assert.equal(click.defaultPrevented, true);
+  assert.equal(f.input.value, 'Still saving');
+});
+
+test('saving a native composer also holds automatic injection until the draft has been persisted', async t => {
+  const f = fixture(t);
+  await f.queue.enqueue('Already queued');
+  f.input.value = 'Save this draft';
+  const originalSet = f.window.chrome.storage.local.set;
+  let release;
+  f.window.chrome.storage.local.set = values => new Promise(resolve => {
+    release = async () => { await originalSet(values); resolve(); };
+  });
+  const saving = f.ui.enqueueComposer();
+  await tick();
+  assert.equal(f.queue.composerEnqueuePending, true);
+  f.window.__CGQ_HumanSimulator__.typeText = () => assert.fail('must not inject while native draft save is pending');
+  await f.queue.runLoopStep();
+  assert.equal(f.input.value, 'Save this draft');
+  await release(); assert.equal(await saving, true);
+  assert.equal(f.queue.composerEnqueuePending, false);
+  assert.equal(f.input.value, '');
+  assert.deepEqual(Array.from(f.queue.items, item => item.text), ['Already queued', 'Save this draft']);
+});
+
 test('native stop remains usable, and the queue composer lock still prevents duplicate sends', t => {
   const f = fixture(t, { generating: true }); f.ui.setupKeyboardShortcuts();
   f.queue.currentState = 'typing'; f.input.value = 'Queue is typing';

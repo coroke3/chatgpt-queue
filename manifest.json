@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Queue Assistant",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "description": "ChatGPTに人間らしいタイピングと待機時間を備えた疑似キュー機能（複数タブ並行・管理ダッシュボード付き）を追加する拡張機能",
   "permissions": [
     "storage",

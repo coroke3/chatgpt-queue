@@ -2025,10 +2025,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let isSingleComposing = false;
 
   const directSending = new Set();
+  const enqueueSending = new Set();
   const sendDirect = (tabId, input, toolInput) => {
     const t = cachedTabsData.get(tabId);
     const text = input.value.trim();
-    if (!text || directSending.has(tabId)) return;
+    if (!text || directSending.has(tabId) || enqueueSending.has(tabId)) return;
     if (!t?.chromeTabId || t.needsConnection) { showToast('対象タブを再読み込みして接続してください'); return; }
     if (modelRequests.has(tabId)) { showToast('モデルの確認が終わってから送信してください'); return; }
     directSending.add(tabId);
@@ -2053,7 +2054,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       showToast('送信しました');
     };
-    try { chrome.tabs.sendMessage(t.chromeTabId, { action: 'SEND_PROMPT_TO_TAB', text, tools: toolInput.getTools() }, finish); }
+    try { chrome.tabs.sendMessage(t.chromeTabId, { action: 'SEND_PROMPT_TO_TAB', text, tools: toolInput.getTools(), expectedTabId: tabId }, finish); }
     catch (error) { directSending.delete(tabId); showToast('対象タブに接続できません。入力内容を保持しています'); }
   };
 
@@ -2070,17 +2071,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const modelData = getModelAndEffortData(t);
       const model = selectedModelOverride[selectedTabId] || modelData?.activeModelId || (singleModelSelect ? singleModelSelect.value : 'auto');
       const effort = selectedEffortOverride[selectedTabId] || modelData?.activeEffortId || (singleEffortSelect ? singleEffortSelect.value : 'auto');
-      if (!sendRemoteCommand(selectedTabId, { action: 'ENQUEUE', text, model, effort, tools: singleToolInput.getTools() })) return;
-      const button = document.getElementById('single-btn-enqueue');
-      if (button) {
-        button.classList.add('sent');
-        setTimeout(() => button.classList.remove('sent'), 350);
-      }
-      singleChatInput.value = '';
-      fitSingleInput();
-      tabInputDrafts.delete(selectedTabId);
-      singleToolInput.clear();
-      showToast('キューに追加しました');
+      const tabId = selectedTabId;
+      if (!sendRemoteCommand(tabId, { action: 'ENQUEUE', text, model, effort, tools: singleToolInput.getTools() }, success => {
+        if (!success) return;
+        if (selectedTabId === tabId) {
+          const button = document.getElementById('single-btn-enqueue');
+          button?.classList.add('sent');
+          setTimeout(() => button?.classList.remove('sent'), 350);
+        }
+        if (selectedTabId === tabId && singleChatInput.value.trim() === text) {
+          singleChatInput.value = '';
+          fitSingleInput();
+          tabInputDrafts.delete(tabId);
+          singleToolInput.clear();
+        } else if (selectedTabId !== tabId && tabInputDrafts.get(tabId)?.trim() === text) {
+          tabInputDrafts.delete(tabId); toolDrafts.delete(tabId);
+        }
+        showToast('キューに追加しました');
+      })) return;
       singleChatInput.focus();
     }
   };
@@ -3127,17 +3135,16 @@ a{color:inherit}
         const modelData = getModelAndEffortData(t);
         const model = selectedModelOverride[tabId] || cardModelSelections[tabId]?.model || modelData?.activeModelId || 'auto';
         const effort = selectedEffortOverride[tabId] || cardModelSelections[tabId]?.effort || modelData?.activeEffortId || 'auto';
-        if (!sendRemoteCommand(tabId, { action: 'ENQUEUE', text, model, effort, tools: toolInput.getTools() })) return;
-        const button = card.querySelector('.btn-enqueue-prompt');
-        if (button) {
-          button.classList.add('sent');
-          setTimeout(() => button.classList.remove('sent'), 350);
-        }
-        input.value = '';
-        fitInput(input, 100);
-        tabInputDrafts.delete(tabId);
-        toolInput.clear();
-        showToast('キューに追加しました');
+        if (!sendRemoteCommand(tabId, { action: 'ENQUEUE', text, model, effort, tools: toolInput.getTools() }, success => {
+          if (!success) return;
+          const button = card.querySelector('.btn-enqueue-prompt');
+          button?.classList.add('sent');
+          setTimeout(() => button?.classList.remove('sent'), 350);
+          if (input.value.trim() === text) {
+            input.value = ''; fitInput(input, 100); tabInputDrafts.delete(tabId); toolInput.clear();
+          }
+          showToast('キューに追加しました');
+        })) return;
         input.focus();
       }
     };
@@ -3235,10 +3242,27 @@ a{color:inherit}
     }
   });
 
-  function sendRemoteCommand(tabId, command) {
+  function sendRemoteCommand(tabId, command, onComplete = () => {}) {
     if (cachedTabsData.get(tabId)?.needsConnection) {
       showToast('対象タブを再読み込みして接続してください。');
       return false;
+    }
+    if (command.action === 'ENQUEUE' || command.action === 'ENQUEUE_MANY') {
+      const tab = cachedTabsData.get(tabId);
+      if (!tab?.chromeTabId || enqueueSending.has(tabId)) return false;
+      enqueueSending.add(tabId);
+      const finish = response => {
+        const failed = chrome.runtime.lastError || !response?.success;
+        enqueueSending.delete(tabId);
+        if (failed) showToast(response?.error || '追加を確認できません。入力を保持しています。対象タブのキューを確認してください');
+        onComplete(!failed);
+        if (!failed) refreshDashboard();
+      };
+      try {
+        chrome.tabs.sendMessage(tab.chromeTabId, { ...command,
+          action: command.action === 'ENQUEUE' ? 'ADD_TO_TAB_QUEUE' : 'ADD_MANY_TO_TAB_QUEUE', expectedTabId: tabId }, finish);
+      } catch (error) { enqueueSending.delete(tabId); onComplete(false); showToast('対象タブに接続できません。入力を保持しています'); }
+      return true;
     }
     const key = `cgq_cmd_${tabId}`;
     // A unique nonce makes every command a real change, so identical prompts are not dropped by storage
@@ -3312,9 +3336,9 @@ a{color:inherit}
     }
   });
   document.getElementById('single-btn-newchat')?.addEventListener('click', () => {
-    if (selectedTabId && sendRemoteCommand(selectedTabId, { action: 'ENQUEUE', text: '/newchat' })) {
-      showToast('新しいチャットの開始をキューに追加しました');
-    }
+    if (selectedTabId) sendRemoteCommand(selectedTabId, { action: 'ENQUEUE', text: '/newchat' }, success => {
+      if (success) showToast('新しいチャットの開始をキューに追加しました');
+    });
   });
 
   function getBulkPrompts() {
@@ -3330,6 +3354,7 @@ a{color:inherit}
   }
 
   function openBulkModal(defaultTabId = null) {
+    if (bulkPending) return;
     if (!bulkModal || !bulkTargetSelect) return;
     const tabs = Array.from(cachedTabsData.values());
     if (tabs.length === 0) {
@@ -3347,7 +3372,10 @@ a{color:inherit}
     setTimeout(() => bulkTextarea?.focus(), 60);
   }
 
+  let bulkPending = false;
+  const bulkSaved = new Set();
   function closeBulkModal() {
+    if (bulkPending) return;
     bulkToolInput.close();
     if (bulkModal) bulkModal.style.display = 'none';
   }
@@ -3393,6 +3421,7 @@ a{color:inherit}
 
   if (bulkSubmitBtn) {
     bulkSubmitBtn.addEventListener('click', async () => {
+      if (bulkPending) return;
       const prompts = getBulkPrompts();
       if (prompts.length === 0) {
         showToast('追加するプロンプトが見つかりませんでした');
@@ -3401,18 +3430,22 @@ a{color:inherit}
       const targetTabId = bulkTargetSelect?.value;
       if (!targetTabId) return;
 
-      if (targetTabId === '__ALL__') {
-        const tabs = Array.from(cachedTabsData.values());
-        for (const t of tabs) {
-          sendRemoteCommand(t.tabId, { action: 'ENQUEUE_MANY', texts: prompts });
-        }
-        showToast(`${tabs.length}個のチャットに各${prompts.length}件のプロンプトを一括追加しました`);
-      } else {
-        sendRemoteCommand(targetTabId, { action: 'ENQUEUE_MANY', texts: prompts });
+      const targets = targetTabId === '__ALL__' ? Array.from(cachedTabsData.keys()) : [targetTabId];
+      bulkPending = true; bulkSubmitBtn.disabled = true; bulkTextarea.disabled = true; bulkTargetSelect.disabled = true; bulkDelimSelect.disabled = true;
+      const results = await Promise.all(targets.map(tabId => new Promise(resolve => {
+        const key = JSON.stringify([tabId, prompts]);
+        if (bulkSaved.has(key)) return resolve(true);
+        const sent = sendRemoteCommand(tabId, { action: 'ENQUEUE_MANY', texts: prompts }, success => {
+          if (success) bulkSaved.add(key);
+          resolve(success);
+        });
+        if (!sent) resolve(false);
+      })));
+      bulkPending = false; bulkSubmitBtn.disabled = false; bulkTextarea.disabled = false; bulkTargetSelect.disabled = false; bulkDelimSelect.disabled = false;
+      if (results.length && results.every(Boolean)) {
+        bulkSaved.clear(); bulkTextarea.value = ''; closeBulkModal();
         showToast(`${prompts.length}件のプロンプトを一括追加しました`);
-      }
-      if (bulkTextarea) bulkTextarea.value = '';
-      closeBulkModal();
+      } else showToast('追加できなかった対象があります。入力を保持しました。再試行時は保存済みの対象を除きます');
     });
   }
 

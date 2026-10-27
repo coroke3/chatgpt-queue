@@ -74,8 +74,8 @@ test('Queue Manager discovers an unregistered Gemini and displays its real snaps
   const input = f.doc.querySelector('.cgq-dash-prompt-input');
   input.value = '追加する質問';
   f.doc.querySelector('.btn-enqueue-prompt').click();
-  assert.ok(f.commands.some(command => command.cgq_cmd_real_41?.text === '追加する質問'));
-  assert.ok(!f.commands.some(command => command.cgq_cmd_browser_41));
+  assert.ok(f.requests.some(request => request.action === 'ADD_TO_TAB_QUEUE' && request.text === '追加する質問' && request.expectedTabId === 'real_41'));
+  assert.ok(!f.requests.some(request => request.action === 'ADD_TO_TAB_QUEUE' && request.expectedTabId === 'browser_41'));
   assert.deepEqual(f.errors, []);
 });
 

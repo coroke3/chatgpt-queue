@@ -26,6 +26,9 @@ async function fixture(t, mode, platform, legacyFlag, withOther = false) {
     tabs: { query: (query, callback) => callback(Object.values(registry).map(state => ({ id: state.chromeTabId, url: state.url, title: state.title }))),
       sendMessage: (id, request, callback) => {
         if (request.action === 'SEND_PROMPT_TO_TAB') pending.push({ request, callback });
+        else if (request.action === 'ADD_TO_TAB_QUEUE') {
+          commands.push({ cgq_cmd_keyboard: { ...request, action: 'ENQUEUE' } }); callback({ success: true });
+        }
         else callback?.({ success: true, state: id === 8 ? other : tab });
       }
     }
