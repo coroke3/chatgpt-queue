@@ -1483,6 +1483,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    renderHistoryStatus(singleAnswersArea, t.tabId);
+
     // 4. Queued Messages Panel (Anchored Above Composer)
     singleQueuePanel.hidden = items.length === 0;
     if (singleQueueBadge.textContent !== String(items.length)) {
@@ -1851,10 +1853,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function loadOlderTurns(scrollEl, indicatorEl, tabId, kind) {
     const t = cachedTabsData.get(tabId);
-    if (!t || t.needsConnection || !t.chromeTabId) return;
+    if (!t) return;
     const state = olderHistory.get(tabId) || {};
     olderHistory.set(tabId, state);
-    if (state.loading || (state.exhaustedAt && Date.now() - state.exhaustedAt < 15000)) return;
+    if (state.loading || Date.now() < (state.retryAt || 0)) return;
+    if (t.needsConnection || !t.chromeTabId) {
+      state.message = 'ログが取得できません';
+      state.retryAt = Date.now() + 3000;
+      renderHistoryStatus(indicatorEl, tabId);
+      return;
+    }
 
     const turns = getUnifiedTurns(t);
     if (kind === 'single' && turns.length > 1 && singleChatHistoryMode === 'latest') {
@@ -1866,21 +1874,41 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     state.loading = true;
-    indicatorEl.classList.add('cgq-loading-older');
+    state.message = '過去のログを読み込み中…';
+    renderHistoryStatus(indicatorEl, tabId);
+    let settled = false;
     const done = response => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      if (!state.loading) return;
       state.loading = false;
-      indicatorEl.classList.remove('cgq-loading-older');
-      if (!response?.success) return;
-      const before = getUnifiedTurns(cachedTabsData.get(tabId) || t).length;
-      state.all = response.turns || [];
-      const after = getUnifiedTurns(cachedTabsData.get(tabId) || t).length;
-      if (after <= before) {
-        state.exhaustedAt = Date.now();
+      const showStatus = () => {
+        if (kind !== 'single' || selectedTabId === tabId) renderHistoryStatus(indicatorEl, tabId);
+      };
+      if (!response?.success || !Array.isArray(response.turns)) {
+        state.message = 'ログが取得できません';
+        state.retryAt = Date.now() + 3000;
+        showStatus();
         return;
       }
+      const before = getUnifiedTurns(cachedTabsData.get(tabId) || t).length;
+      const incoming = response.turns.filter(qa => qa && typeof qa.prompt === 'string' && typeof qa.answer === 'string');
+      const previous = state.all || [];
+      const keys = new Set(incoming.map(turnKey));
+      const overlap = previous.findIndex(qa => keys.has(turnKey(qa)));
+      state.all = overlap < 0
+        ? [...incoming, ...previous]
+        : [...previous.slice(0, overlap), ...incoming, ...previous.slice(overlap).filter(qa => !keys.has(turnKey(qa)))];
+      const after = getUnifiedTurns(cachedTabsData.get(tabId) || t).length;
+      if (after <= before) {
+        state.message = 'ログが取得できません';
+        state.retryAt = Date.now() + 15000;
+        showStatus();
+        return;
+      }
+      state.message = '';
       keepScroll(scrollEl, () => rerenderTurns(kind, tabId));
+      showStatus();
     };
     const timer = setTimeout(() => done(null), 8000);
     try {
@@ -1892,9 +1920,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function renderHistoryStatus(indicatorEl, tabId) {
+    if (!indicatorEl) return;
+    const state = olderHistory.get(tabId);
+    let status = indicatorEl.querySelector(':scope > .cgq-history-status');
+    if (!state?.message) { status?.remove(); return; }
+    if (!status) {
+      status = document.createElement('div');
+      status.className = 'cgq-history-status';
+      status.setAttribute('role', 'status');
+      status.setAttribute('aria-live', 'polite');
+      indicatorEl.prepend(status);
+    }
+    status.textContent = state.message;
+  }
+
   function bindOlderTurns(scrollEl, indicatorEl, getTabId, kind) {
     if (!scrollEl || scrollEl.dataset.olderBound) return;
     scrollEl.dataset.olderBound = '1';
+    renderHistoryStatus(indicatorEl, getTabId());
     const load = () => { const tabId = getTabId(); if (tabId) loadOlderTurns(scrollEl, indicatorEl, tabId, kind); };
     scrollEl.addEventListener('scroll', () => { if (scrollEl.scrollTop <= 80) load(); }, { passive: true });
     // Content that does not fill the view never scrolls: an upward wheel at the top asks too.
@@ -2420,6 +2464,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Composer Queue Update
+    renderHistoryStatus(card.querySelector('.cgq-tab-view[data-view="results"]'), tid);
     const newQueueSig = getQueueSig(t);
     if (card.dataset.queueSig !== newQueueSig) {
       card.dataset.queueSig = newQueueSig;

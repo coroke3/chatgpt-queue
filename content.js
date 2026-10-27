@@ -4938,13 +4938,29 @@
       const scroller = scrollParentOf(HumanSimulator.userNodes()[0]);
       if (scroller) {
         const { scrollTop, scrollHeight } = scroller;
-        const before = HumanSimulator.userNodes().length;
-        scroller.scrollTop = 1;
-        scroller.scrollTop = 0;
-        for (let i = 0; i < 12 && HumanSimulator.userNodes().length <= before; i++) await sleep(250);
-        await sleep(300); // let the newly loaded turns finish rendering
-        scroller.scrollTop = scrollTop + (scroller.scrollHeight - scrollHeight);
-        turns = read();
+        const tabId = queueManager.tabId;
+        const wasStuck = queueManager.isStuckToBottom;
+        const signature = () => {
+          const nodes = HumanSimulator.userNodes();
+          return `${nodes.length}:${nodes[0]?.textContent || ''}`;
+        };
+        const before = signature();
+        queueManager.isStuckToBottom = false;
+        try {
+          scroller.scrollTop = 1;
+          scroller.scrollTop = 0;
+          // Virtualized histories can replace the first turn without increasing node count.
+          for (let i = 0; i < 12 && signature() === before; i++) await sleep(250);
+          await sleep(300);
+          if (queueManager.tabId !== tabId) throw new Error('Conversation changed');
+          turns = read();
+        } finally {
+          // Preserve a deliberate scroll by someone using the source tab during the request.
+          if (queueManager.tabId === tabId && scroller.scrollTop <= 1) {
+            scroller.scrollTop = scrollTop + (scroller.scrollHeight - scrollHeight);
+            queueManager.isStuckToBottom = wasStuck;
+          }
+        }
       }
     }
     return { success: true, turns, exhausted: turns.length <= have };
