@@ -1,4 +1,26 @@
 document.addEventListener('DOMContentLoaded', async () => {
+  let themeMode = 'auto';
+  let themeRevision = 0;
+  const themeMedia = window.matchMedia?.('(prefers-color-scheme: dark)');
+  const applyTheme = () => {
+    document.documentElement.dataset.cgqTheme = themeMode === 'dark' || (themeMode !== 'light' && !!themeMedia?.matches) ? 'dark' : 'light';
+  };
+  if (themeMedia?.addEventListener) themeMedia.addEventListener('change', applyTheme);
+  else themeMedia?.addListener?.(applyTheme);
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area === 'local' && changes.cgq_user_settings) {
+      themeRevision++;
+      themeMode = changes.cgq_user_settings.newValue?.themeMode || 'auto';
+      applyTheme();
+    }
+  });
+  applyTheme();
+  const readRevision = themeRevision;
+  chrome.storage?.local?.get(['cgq_user_settings'], result => {
+    if (themeRevision !== readRevision) return;
+    themeMode = result?.cgq_user_settings?.themeMode || 'auto';
+    applyTheme();
+  });
   const countBadge = document.getElementById('queue-count');
   const statItems = document.getElementById('stat-items');
   const popupInput = document.getElementById('popup-input');

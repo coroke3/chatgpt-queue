@@ -4049,6 +4049,19 @@
     }
 
     detectPageIsDark() {
+      // Explicit host attributes outrank inherited backgrounds and the OS preference.
+      const roots = IS_GEMINI ? [document.body, document.documentElement] : [document.documentElement, document.body];
+      for (const root of roots) {
+        if (!root) continue;
+        for (const attr of ['data-theme', 'data-color-scheme', 'theme']) {
+          const value = root.getAttribute(attr)?.toLowerCase();
+          if (value === 'dark' || value === 'light') return value === 'dark';
+        }
+        if (root.classList.contains('dark') || root.classList.contains('dark-theme')) return true;
+        if (root.classList.contains('light') || root.classList.contains('light-theme')) return false;
+        const scheme = root.style.colorScheme.trim();
+        if (scheme === 'dark' || scheme === 'light') return scheme === 'dark';
+      }
       if (IS_GEMINI) {
         if (document.body.classList.contains('dark-theme') || 
             document.documentElement.classList.contains('dark-theme') ||
@@ -4124,13 +4137,16 @@
       };
 
       const observer = new MutationObserver(applyTheme);
-      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-color-scheme', 'style', 'data-theme'] });
-      observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-color-scheme', 'style', 'data-theme'] });
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-color-scheme', 'style', 'data-theme', 'theme'] });
+      observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-color-scheme', 'style', 'data-theme', 'theme'] });
 
       if (window.matchMedia) {
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+        const media = window.matchMedia('(prefers-color-scheme: dark)');
+        if (media.addEventListener) media.addEventListener('change', applyTheme);
+        else media.addListener?.(applyTheme);
       }
 
+      this.qm.subscribe(applyTheme);
       applyTheme();
       setInterval(applyTheme, 1500);
     }

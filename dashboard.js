@@ -153,6 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedTabId = null;
   let currentRegistry = {};
   let currentSettings = {};
+  let settingsRevision = 0;
   let openBrowserTabs = null;
   let dashboardRefreshing = false;
   const discoveredStates = new Map();
@@ -412,6 +413,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Theme Handling
   // --------------------------------------------------------------------------
   function applyTheme(isDark) {
+    const theme = isDark ? 'dark' : 'light';
+    if (document.body.dataset.cgqTheme === theme && document.body.classList.contains('dark') === !!isDark) return;
+    document.body.dataset.cgqTheme = theme;
+    document.documentElement.style.colorScheme = theme;
     document.body.classList.toggle('dark', isDark);
     document.body.classList.toggle('light', !isDark);
     initMermaid(isDark);
@@ -440,22 +445,29 @@ document.addEventListener('DOMContentLoaded', () => {
     rootStyle.setProperty('--card-min-width', `${clamp(currentSettings?.cardMinWidth, 200, 800, 280)}px`);
   }
 
+  const themeMedia = window.matchMedia?.('(prefers-color-scheme: dark)');
+  function applyCurrentTheme() {
+    const pref = currentSettings.themeMode || 'auto';
+    applyTheme(pref === 'dark' || (pref !== 'light' && !!themeMedia?.matches));
+  }
+  if (themeMedia?.addEventListener) themeMedia.addEventListener('change', applyCurrentTheme);
+  else themeMedia?.addListener?.(applyCurrentTheme);
+
+  const initialSettingsRevision = settingsRevision;
   chrome.storage.local.get([STORAGE_KEY_SETTINGS], (res) => {
+    if (settingsRevision !== initialSettingsRevision) return;
     currentSettings = res[STORAGE_KEY_SETTINGS] || {};
     applyDisplaySettings();
-    const pref = currentSettings.themeMode || 'auto';
-    if (pref === 'dark') applyTheme(true);
-    else if (pref === 'light') applyTheme(false);
-    else {
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      applyTheme(prefersDark);
-    }
+    applyCurrentTheme();
   });
 
   btnThemeToggle.addEventListener('click', () => {
     const isDark = document.body.classList.contains('dark');
+    const toggleRevision = ++settingsRevision;
+    currentSettings = { ...currentSettings, themeMode: !isDark ? 'dark' : 'light' };
     applyTheme(!isDark);
     chrome.storage.local.get([STORAGE_KEY_SETTINGS], (res) => {
+      if (settingsRevision !== toggleRevision) return;
       const s = res[STORAGE_KEY_SETTINGS] || {};
       s.themeMode = !isDark ? 'dark' : 'light';
       chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: s });
@@ -645,12 +657,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (dashboardRefreshing) return;
     dashboardRefreshing = true;
     try {
+      const readRevision = settingsRevision;
       const [result, tabs] = await Promise.all([
         chrome.storage.local.get([STORAGE_KEY_REGISTRY, STORAGE_KEY_SETTINGS]), queryChatTabs()
       ]);
       currentRegistry = result[STORAGE_KEY_REGISTRY] || {};
-      currentSettings = result[STORAGE_KEY_SETTINGS] || {};
+      if (settingsRevision === readRevision) currentSettings = result[STORAGE_KEY_SETTINGS] || {};
       applyDisplaySettings();
+      applyCurrentTheme();
       if (tabs) {
         openBrowserTabs = new Map(tabs.map(tab => [tab.id, tab]));
         for (const id of discoveredStates.keys()) if (!openBrowserTabs.has(id)) discoveredStates.delete(id);
@@ -1195,6 +1209,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function saveSettings(newSettings, showFeedback = false) {
+    settingsRevision++;
     currentSettings = { ...currentSettings, ...newSettings };
     try {
       await chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: currentSettings });
@@ -1202,14 +1217,7 @@ document.addEventListener('DOMContentLoaded', () => {
       console.warn('[Dashboard] Failed to save settings:', e);
     }
 
-    if (newSettings.themeMode) {
-      if (newSettings.themeMode === 'dark') applyTheme(true);
-      else if (newSettings.themeMode === 'light') applyTheme(false);
-      else {
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        applyTheme(prefersDark);
-      }
-    }
+    applyCurrentTheme();
 
     applyDisplaySettings();
 
@@ -3427,7 +3435,10 @@ a{color:inherit}
         updateDashboard();
       }
       if (changes[STORAGE_KEY_SETTINGS]) {
+        settingsRevision++;
         currentSettings = changes[STORAGE_KEY_SETTINGS].newValue || {};
+        applyCurrentTheme();
+        applyDisplaySettings();
         if (currentMode === 'settings') {
           renderSettingsView();
         }
