@@ -12,7 +12,7 @@ npm run check
 npm test
 ```
 
-PowerShellでは `npm.cmd ci`、`npm.cmd run check`、`npm.cmd test` も使えます。拡張機能の読み込み方法は[README](../README.md#導入方法)を参照してください。
+PowerShellでは `npm.cmd ci`、`npm.cmd run check`、`npm.cmd test` も使えます。拡張機能の読み込み方法は[README](../README.md#導入更新)を参照してください。
 
 ## ファイル構成
 
