@@ -344,7 +344,7 @@ test('Gemini thinking level is switched through the mode menu by exact label, ne
   });
   for (const file of ['references.js', 'model-picker.js', 'composer-tools.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
   window.eval(fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async () => {};')
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async () => {};')
     .replace('  const queueManager = new QueueManager();', '  globalThis.__queueTest = { DOM }; return;\n  const queueManager = new QueueManager();'));
   const { DOM } = window.__queueTest;
   assert.equal(await DOM.switchReasoningEffort('high'), true);

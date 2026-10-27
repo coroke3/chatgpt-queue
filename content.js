@@ -18,10 +18,11 @@
   const IS_GEMINI = window.location.hostname.includes('gemini.google.com');
   const IS_CHATGPT = window.location.hostname.includes('chatgpt.com') || window.location.hostname.includes('openai.com');
   const PLATFORM_ID = IS_GEMINI ? 'gemini' : 'chatgpt';
-  const modelPicker = new CGQServiceModelPicker(PLATFORM_ID);
+  const modelPicker = new CGQServiceModelPicker(PLATFORM_ID, { wait: ms => sleep(ms) });
   const composerTools = new CGQComposerTools.NativeTools(PLATFORM_ID, {
     getInput: () => DOM.getPromptInput(),
-    setText: (input, text, tokens) => HumanSimulator.setDOMContent(input, text, tokens)
+    setText: (input, text, tokens) => HumanSimulator.setDOMContent(input, text, tokens),
+    wait: ms => sleep(ms)
   });
 
   // ==========================================================================
@@ -241,7 +242,7 @@
   const GEMINI_THINKING_LABELS = { low: ['低', 'Low'], medium: ['標準', 'Standard', 'Medium'], high: ['高', 'High'] };
   let geminiThinkingCache = null;
   const normalizeDraft = value => String(value || '').replace(/\s+/g, ' ').trim();
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));
 
   function generateId() {
     return 'q_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
@@ -3003,17 +3004,20 @@
     // Dashboard Registry Reporting (Heartbeat)
     // ------------------------------------------------------------------------
     setupRegistryHeartbeat() {
-      // 稼働状況をダッシュボードへ定期同期（非表示かつ待機時は省電力モードで頻度調整）
-      const beat = () => {
-        this.reportToRegistry();
-        const isIdle = this.items.length === 0 && !DOM.isGenerating();
-        const interval = (document.hidden && isIdle) ? 3500 : 1500;
-        setTimeout(beat, interval);
-      };
-      setTimeout(beat, 1500);
+      if (this.heartbeatTask) return;
+      // Keep the dashboard connected even when page timers are throttled.
+      this.heartbeatTask = (async () => {
+        await sleep(1500);
+        while (!this.heartbeatStopped) {
+          await this.reportToRegistry();
+          const isIdle = this.items.length === 0 && !DOM.isGenerating();
+          await sleep((document.hidden && isIdle) ? 3500 : 1500);
+        }
+      })().catch(error => console.warn('[ChatGPT Queue] Heartbeat stopped:', error));
 
       // Clean up on tab close
       window.addEventListener('beforeunload', async () => {
+        this.heartbeatStopped = true;
         try {
           const result = await chrome.storage.local.get([STORAGE_KEY_REGISTRY]);
           const reg = result[STORAGE_KEY_REGISTRY] || {};

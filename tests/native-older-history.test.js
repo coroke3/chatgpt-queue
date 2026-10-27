@@ -14,7 +14,7 @@ function fixture(t, platform) {
   const root = path.join(__dirname, '..');
   for (const file of ['references.js', 'model-picker.js', 'composer-tools.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
   window.eval(fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async ms => globalThis.__onSleep(ms);')
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async ms => globalThis.__onSleep(ms);')
     .replace(/  queueManager\.init\(\)\.then\(\(\) => \{\s*new QueueUI\(queueManager\);\s*\}\);/,
       '  globalThis.__historyTest = { queueManager, getOlderHistory, DOM, HumanSimulator };'));
   const api = window.__historyTest;

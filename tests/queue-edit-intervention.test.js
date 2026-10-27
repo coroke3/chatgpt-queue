@@ -16,7 +16,7 @@ function fixture(t, { generating = false, platform = 'chatgpt' } = {}) {
   // JSDOM cannot create trusted UI events; remove only that entry gate to exercise routing.
   window.eval(fs.readFileSync(path.join(root, 'content.js'), 'utf8')
     .replaceAll('if (!e.isTrusted) return;', '')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async () => {};')
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));', 'const sleep = async () => {};')
     .replace('  const queueManager = new QueueManager();', '  globalThis.__test = { QueueManager, QueueUI, DOM }; return;\n  const queueManager = new QueueManager();'));
   const { QueueManager, QueueUI, DOM } = window.__test;
   const queue = new QueueManager(); queue.notify = () => {};

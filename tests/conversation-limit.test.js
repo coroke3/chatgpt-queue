@@ -174,7 +174,7 @@ function fixture(t, { url = 'https://chatgpt.com/c/old-chat', html = '', data = 
     window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
   }
   window.eval(fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));',
       'const sleep = async () => { if (globalThis.__stopLoop?.()) throw new Error("TEST_STOP"); };')
     .replace('  const queueManager = new QueueManager();',
       '  globalThis.__test = { QueueManager, DOM, HumanSimulator, composerTools }; return;\n  const queueManager = new QueueManager();'));

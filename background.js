@@ -5,6 +5,18 @@
 console.log('[ChatGPT Queue Assistant] Service Worker initialized successfully.');
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'QUEUE_WAIT') {
+    // A bounded response keeps the worker alive for this wait. No tabs.update,
+    // focus, visibility spoofing, or access to service APIs is needed.
+    const allowed = sender.tab?.url && /^https:\/\/(?:gemini\.google\.com|chatgpt\.com|chat\.openai\.com)\//.test(sender.tab.url);
+    if (!allowed || !Number.isInteger(request.delay) || request.delay < 0 || request.delay > 10000) {
+      sendResponse({ success: false });
+      return false;
+    }
+    setTimeout(() => sendResponse({ success: true, waited: request.delay }), request.delay);
+    return true;
+  }
+
   // Return the sender's chrome tab ID
   if (request.action === 'GET_MY_CHROME_TAB_ID') {
     sendResponse({ chromeTabId: sender.tab ? sender.tab.id : null });

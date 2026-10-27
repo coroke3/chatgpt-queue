@@ -15,7 +15,7 @@ test('a queued unavailable model pauses with the item retained before typing or 
   window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
   // Expose production classes without starting the content script's background loops.
   const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));',
       'const sleep = async () => { if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
     .replace('  const queueManager = new QueueManager();',
       '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator, modelPicker }; return;\n  const queueManager = new QueueManager();');
@@ -57,7 +57,7 @@ test('Gemini queue reads model metadata and proceeds through typing and send wit
   window.eval(fs.readFileSync(path.join(root, 'model-picker.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
   const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));',
       'const sleep = async () => { if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
     .replace('  const queueManager = new QueueManager();',
       '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();');
@@ -100,7 +100,7 @@ test('a prompt typed and then abandoned (paused mid-typing) is cleared and sent 
   window.eval(fs.readFileSync(path.join(root, 'model-picker.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
   const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));',
       'const sleep = async () => { if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
     .replace('  const queueManager = new QueueManager();',
       '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();');
@@ -171,7 +171,7 @@ test('a user draft left in the composer is sent once it stops changing, then the
   window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
   let clock = 1_000_000;
   const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));',
       'const sleep = async (ms = 0) => { globalThis.__advance(ms); if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
     .replace('  const queueManager = new QueueManager();',
       '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();');
@@ -213,7 +213,7 @@ test('a draft that keeps changing (the user is still typing) is never sent by th
   window.eval(fs.readFileSync(path.join(root, 'composer-tools.js'), 'utf8'));
   let clock = 1_000_000;
   const source = fs.readFileSync(path.join(root, 'content.js'), 'utf8')
-    .replace('const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));',
+    .replace('const sleep = (ms) => globalThis.CGQQueueTiming?.wait(ms) || new Promise(resolve => setTimeout(resolve, ms));',
       'const sleep = async (ms = 0) => { globalThis.__advance(ms); if (globalThis.__stopLoop()) throw new Error("TEST_STOP"); };')
     .replace('  const queueManager = new QueueManager();',
       '  globalThis.__queueTest = { QueueManager, DOM, HumanSimulator }; return;\n  const queueManager = new QueueManager();');
