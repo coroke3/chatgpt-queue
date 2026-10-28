@@ -190,6 +190,7 @@ test('ChatGPT connection lost banner triggers countdown and reload within 2 minu
   const qm = new window.__QueueManager();
   qm.settings = { autoReloadOnDisconnect: true, disconnectReloadTimeout: 120 };
   qm.saveQueue = async () => {};
+  qm.saveRecoveryCheckpoint = async () => {};
   qm.reloadPage = () => { reloaded = true; };
 
   // First check: records start time, schedules reload

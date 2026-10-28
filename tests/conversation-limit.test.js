@@ -506,6 +506,7 @@ test('reload into a new session retains ordered multiline prompts, tools and pau
     await f.queue.enqueue('First\nsecond line', { model: 'test-model', effort: 'high', tools: [{ id: 'github', type: 'app' }] });
     await f.queue.enqueue('Last');
     f.queue.isPaused = true;
+    await f.queue.queueWrite;
     const expected = JSON.parse(JSON.stringify(f.queue.items));
     const session = Object.fromEntries(Object.entries(f.window.sessionStorage));
     const next = fixture(t, { url: newUrl, data: f.data, session });
@@ -523,7 +524,7 @@ test('new-session recovery retains destination work and does not inject into unr
   const f = fixture(t);
   await f.queue.enqueue('Source');
   const session = Object.fromEntries(Object.entries(f.window.sessionStorage));
-  const other = fixture(t, { url: 'https://chatgpt.com/c/unrelated', data: f.data, session });
+  const other = fixture(t, { url: 'https://chatgpt.com/c/unrelated', data: { ...f.data }, session });
   await other.queue.loadFromStorage();
   assert.equal(other.queue.items.length, 0);
   assert.equal(f.data[f.queue.storageKeyQueue].length, 1);
@@ -539,7 +540,7 @@ test('automatic reload waits for durable storage and recovers a newly assigned c
   const set = f.window.chrome.storage.local.set;
   let release;
   f.window.chrome.storage.local.set = async values => {
-    await new Promise(resolve => { release = resolve; });
+    if (values[f.queue.storageKeyQueue]) await new Promise(resolve => { release = resolve; });
     return set(values);
   };
   let reloads = 0;

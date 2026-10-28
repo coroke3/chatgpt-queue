@@ -313,6 +313,7 @@ test('a delivery timeout reloads once, and if it persists after the reload conti
   queue.saveQueue = async () => {};
   let reloads = 0;
   const switched = [];
+  queue.saveRecoveryCheckpoint = async () => {};
   queue.reloadPage = () => { reloads++; };
   queue.startNewChat = async reason => { switched.push(reason); };
   queue.rememberSent({ text: 'Timed-out prompt', tools: [] });
@@ -352,6 +353,7 @@ test('a delivery timeout with a retry button presses it first, then reloads if t
   queue.saveQueue = async () => {};
   let reloads = 0;
   let retries = 0;
+  queue.saveRecoveryCheckpoint = async () => {};
   queue.reloadPage = () => { reloads++; };
   queue.startNewChat = async () => {};
   window.document.querySelector('button').addEventListener('click', () => retries++);
