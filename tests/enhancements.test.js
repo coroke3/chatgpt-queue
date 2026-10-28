@@ -126,7 +126,7 @@ test('Queue Manager provides a comprehensive Settings screen with all controls a
   assert.ok(js.includes("switchMode('settings')"), 'dashboard.js must support switching to settings mode');
 });
 
-test('ChatGPT connection lost banner triggers countdown and reload within 2 minutes', () => {
+test('ChatGPT connection lost banner triggers countdown and reload within 2 minutes', async () => {
   const contentJs = fs.readFileSync(path.join(root, 'content.js'), 'utf8');
 
   // Assert code implementations exist in content.js
@@ -193,14 +193,14 @@ test('ChatGPT connection lost banner triggers countdown and reload within 2 minu
   qm.reloadPage = () => { reloaded = true; };
 
   // First check: records start time, schedules reload
-  qm.checkConnectionAndAutoReload();
+  await qm.checkConnectionAndAutoReload();
   assert.ok(qm.connectionLostSince, 'Must record connectionLostSince timestamp');
   assert.ok(qm.progressText.includes('2分後に再読み込み'), 'Must show countdown in progressText');
   assert.equal(reloaded, false, 'Should not reload immediately');
 
   // Fast-forward past 120 seconds (2 minutes)
   qm.connectionLostSince = Date.now() - (121 * 1000);
-  qm.checkConnectionAndAutoReload();
+  await qm.checkConnectionAndAutoReload();
   assert.equal(reloaded, true, 'Must trigger reload when 2 minutes elapse');
 
   dom.window.close();

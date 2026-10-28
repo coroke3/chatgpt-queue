@@ -91,6 +91,7 @@
   const SESSION_KEY_STALL = 'cgq_stalled_send';
   const STALL_MS = 60 * 60 * 1000; // no answer progress this long -> continue in a new chat
   const SESSION_KEY_CHAT_ROLLOVER = 'cgq_chat_rollover';
+  const SESSION_KEY_QUEUE_SOURCE = 'cgq_queue_source';
 
   const DEFAULT_SETTINGS = {
     minReadDelay: 2.5,          // seconds to wait after ChatGPT completely stops
@@ -2411,7 +2412,14 @@
 
     set isPaused(value) {
       this._isPaused = !!value;
-      try { sessionStorage.setItem(`cgq_paused_${this.tabId}`, String(this._isPaused)); } catch (error) {}
+      try {
+        sessionStorage.setItem(`cgq_paused_${this.tabId}`, String(this._isPaused));
+        const source = JSON.parse(sessionStorage.getItem(SESSION_KEY_QUEUE_SOURCE) || 'null');
+        if (source?.tabId === this.tabId) {
+          source.isPaused = this._isPaused;
+          sessionStorage.setItem(SESSION_KEY_QUEUE_SOURCE, JSON.stringify(source));
+        }
+      } catch (error) {}
     }
 
     restorePauseState() {
@@ -2559,7 +2567,7 @@
       }, 1000);
     }
 
-    checkConnectionAndAutoReload() {
+    async checkConnectionAndAutoReload() {
       if (IS_GEMINI) return false;
       if (this.settings.autoReloadOnDisconnect === false) return false;
 
@@ -2600,8 +2608,7 @@
         if (elapsed >= timeoutMs) {
           console.warn('[ChatGPT Queue] No new answer text for 2 minutes while disconnected. Reloading the page now...');
           this.connectionLostSince = null;
-          try { this.saveQueue(); } catch (e) {}
-          this.reloadPage();
+          await this.reloadWithQueue();
           return true;
         }
         return true;
@@ -2624,6 +2631,53 @@
       } catch (e) {
         window.location.href = window.location.href;
       }
+    }
+
+    async reloadWithQueue() {
+      if (this.reloadingQueue) return false;
+      this.reloadingQueue = true;
+      try {
+        if (await this.saveQueue() === false) throw new Error('Queue save failed');
+        this.rememberQueueSource(true);
+        this.reloadPage();
+        return true;
+      } catch (error) {
+        this.reloadingQueue = false;
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, 'キューを保存できないため再読み込みを停止しました。');
+        return false;
+      }
+    }
+
+    rememberQueueSource(reloading = false) {
+      sessionStorage.setItem(SESSION_KEY_QUEUE_SOURCE, JSON.stringify({
+        tabId: this.tabId, url: this.currentUrl, isPaused: this.isPaused, reloading
+      }));
+    }
+
+    async restoreReloadedQueue() {
+      const saved = sessionStorage.getItem(SESSION_KEY_QUEUE_SOURCE);
+      if (!saved || sessionStorage.getItem(SESSION_KEY_CHAT_ROLLOVER)) return;
+      const source = JSON.parse(saved);
+      if (source.tabId === this.tabId || !source.tabId?.startsWith(`${this.sessionTabId}_`)) return;
+      const current = new URL(this.currentUrl);
+      if (new URL(source.url).origin !== current.origin) return;
+      const reloaded = source.reloading || window.performance.getEntriesByType?.('navigation')[0]?.type === 'reload';
+      // New sessions inherit pending work; existing conversations remain independent unless reloaded.
+      if (this.conversationId !== 'new' && !reloaded) return;
+      const sourceKey = `cgq_queue_${source.tabId}`;
+      const stored = await chrome.storage.local.get([sourceKey, this.storageKeyQueue]);
+      if (!Array.isArray(stored[sourceKey]) || stored[sourceKey].length === 0) return;
+      const items = [...stored[sourceKey]];
+      const ids = new Set(items.map(item => item.id));
+      for (const item of stored[this.storageKeyQueue] || []) {
+        if (!ids.has(item.id)) { items.push(item); ids.add(item.id); }
+      }
+      await chrome.storage.local.set({ [sourceKey]: [], [this.storageKeyQueue]: items });
+      this.items = items;
+      this.previousTabId = source.tabId;
+      this.isPaused = source.isPaused === true;
+      this.rememberQueueSource();
     }
 
     navigateToNewChat(url) {
@@ -2704,8 +2758,7 @@
         setMark('reload');
         console.warn('[ChatGPT Queue] Message delivery timed out. Reloading the page once.');
         this.setState(QueueState.WAITING_GENERATION, 'メッセージの配信がタイムアウトしたため再読み込みします...');
-        await this.saveQueue();
-        this.reloadPage();
+        if (!await this.reloadWithQueue()) sessionStorage.removeItem(SESSION_KEY_TIMEOUT);
         return true;
       }
       sessionStorage.removeItem(SESSION_KEY_TIMEOUT);
@@ -2867,8 +2920,12 @@
         if (current.origin !== target.origin || current.pathname !== target.pathname ||
           (this.currentUrl === pending.sourceUrl && !pending.allowSameUrl)) return false;
         const sourceKey = `cgq_queue_${pending.sourceTabId}`;
-        const result = await chrome.storage.local.get([sourceKey]);
-        const items = Array.isArray(result[sourceKey]) ? result[sourceKey] : [];
+        const result = await chrome.storage.local.get([sourceKey, this.storageKeyQueue]);
+        const items = Array.isArray(result[sourceKey]) ? [...result[sourceKey]] : [];
+        const ids = new Set(items.map(item => item.id));
+        for (const item of result[this.storageKeyQueue] || []) {
+          if (!ids.has(item.id)) { items.push(item); ids.add(item.id); }
+        }
         await chrome.storage.local.set({ [sourceKey]: [], [this.storageKeyQueue]: items });
         this.items = items;
         this.previousTabId = pending.sourceTabId;
@@ -2876,6 +2933,7 @@
         this.switchingChatSince = null;
         this.chatRolloverFailed = false;
         sessionStorage.removeItem(SESSION_KEY_CHAT_ROLLOVER);
+        this.rememberQueueSource();
         this.setState(this.isPaused ? QueueState.PAUSED : QueueState.IDLE,
           '新しいチャットに切り替えました');
         return true;
@@ -2892,9 +2950,20 @@
       if (href !== this.currentUrl) {
         return this.handleUrlChange(href);
       }
+      return this.urlChange;
     }
 
-    async handleUrlChange(newUrl) {
+    handleUrlChange(newUrl) {
+      const change = (this.urlChange || Promise.resolve()).then(() => this.applyUrlChange(newUrl));
+      this.urlChange = change.catch(error => {
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, 'チャットの切り替えに失敗しました。キューを保持して停止しました。');
+        console.warn('[ChatGPT Queue] Conversation switch error:', error);
+      });
+      return this.urlChange;
+    }
+
+    async applyUrlChange(newUrl) {
       const oldUrl = this.currentUrl;
       if (newUrl === oldUrl) return;
 
@@ -2913,18 +2982,31 @@
       const isNewChatBinding = (
         oldConvId === 'new' &&
         newConvId !== 'new' &&
-        (this.isBusy() || (Date.now() - this.lastSentTimestamp < 15000) || this.items.length > 0)
+        (this.sendingNow || this.manualSending || Date.now() - this.lastSentTimestamp < 15000)
       );
 
       if (isNewChatBinding) {
         console.log(`[ChatGPT Queue] Binding active conversation: new -> ${newConvId}`);
         const oldTabId = this.tabId;
+        const newTabId = computeTabId(this.sessionTabId, newConvId);
+        let transferred;
+        try {
+          await this.serializeQueueWrite(async () => {
+            transferred = this.items;
+            await chrome.storage.local.set({
+              [this.storageKeyQueue]: [], [`cgq_queue_${newTabId}`]: transferred
+            });
+          });
+        } catch (error) {
+          this.currentUrl = oldUrl;
+          throw error;
+        }
         this.conversationId = newConvId;
-        this.tabId = computeTabId(this.sessionTabId, newConvId);
+        this.tabId = newTabId;
+        this.items = transferred;
         this.previousTabId = oldTabId;
-
-        // Migrate queue items to the new key
-        await this.saveQueue();
+        this.isPaused = this.isPaused;
+        this.rememberQueueSource();
 
         // Remove oldTabId from registry
         try {
@@ -2943,7 +3025,12 @@
       const oldTabId = this.tabId;
 
       // Save old conversation queue before switching away
-      await this.saveQueue();
+      if (await this.saveQueue() === false) {
+        this.currentUrl = oldUrl;
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, 'キューを保存できないため切り替えを停止しました。');
+        return;
+      }
 
       // Remove oldTabId from registry so Queue Manager immediately recognizes the switch
       try {
@@ -2971,6 +3058,7 @@
 
       // Load new conversation queue
       await this.loadFromStorage();
+      await this.restoreConversationRollover();
 
       // Notify UI to update mini panel
       this.notify();
@@ -3065,8 +3153,9 @@
     }
 
     async loadFromStorage() {
-      this.restorePauseState();
       try {
+        await this.restoreReloadedQueue();
+        this.restorePauseState();
         const qKey = this.storageKeyQueue;
         const result = await chrome.storage.local.get([
           qKey,
@@ -3085,8 +3174,11 @@
         if (result[STORAGE_KEY_UI_STATE]) {
           this.uiState = { ...DEFAULT_UI_STATE, ...result[STORAGE_KEY_UI_STATE] };
         }
+        this.rememberQueueSource();
       } catch (e) {
         console.warn('[ChatGPT Queue] Storage load error:', e);
+        this.isPaused = true;
+        this.setState(QueueState.PAUSED, 'キューを読み込めませんでした。再読み込みして復旧してください。');
       }
     }
 
@@ -3387,6 +3479,7 @@
           if (change(next) === false) return false;
           await chrome.storage.local.set({ [key]: next });
           if (key === this.storageKeyQueue) {
+            this.rememberQueueSource();
             // Keep the active read-delay item's identity so edits reach the sender.
             this.items = next.map(item => {
               const existing = original.find(entry => entry.id === item.id);
@@ -3404,9 +3497,12 @@
 
     async saveQueue() {
       const key = this.storageKeyQueue;
+      const snapshot = this.items.map(item => ({ ...item }));
       return this.serializeQueueWrite(async () => {
         try {
-          await chrome.storage.local.set({ [key]: this.items });
+          const items = key === this.storageKeyQueue ? this.items : snapshot;
+          await chrome.storage.local.set({ [key]: items });
+          if (key === this.storageKeyQueue) this.rememberQueueSource();
           this.notify();
           return true;
         } catch (error) {
@@ -3556,7 +3652,7 @@
         const loopInterval = document.hidden ? (isIdle ? 2500 : 1000) : (isIdle ? 1000 : 400);
         await sleep(loopInterval);
         await this.checkUrlChange();
-        if (this.manualSending || this.composerEnqueuePending) continue;
+        if (this.manualSending || this.composerEnqueuePending || this.reloadingQueue) continue;
 
         if (this.editingItemId && this.items.some(item => item.id === this.editingItemId)) {
           this.setState(QueueState.WAITING_GENERATION, 'キューのプロンプトを編集中...');
@@ -3574,7 +3670,7 @@
         if (await this.checkDeliveryTimeout()) continue;
         if (await this.checkStalledAndStartNewChat()) continue;
 
-        if (this.checkConnectionAndAutoReload()) {
+        if (await this.checkConnectionAndAutoReload()) {
           await sleep(1000);
           continue;
         }

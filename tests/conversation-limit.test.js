@@ -496,3 +496,142 @@ test('a submission rejected by the limit is retained instead of confirmed by its
   assert.equal(f.queue.items[0].id, 'retry');
   assert.equal(f.data[f.queue.storageKeyQueue][0].id, 'retry');
 });
+
+test('reload into a new session retains ordered multiline prompts, tools and pause on both services', async t => {
+  for (const [oldUrl, newUrl] of [
+    ['https://chatgpt.com/c/old-chat', 'https://chatgpt.com/'],
+    ['https://gemini.google.com/app/old-chat', 'https://gemini.google.com/app']
+  ]) {
+    const f = fixture(t, { url: oldUrl });
+    await f.queue.enqueue('First\nsecond line', { model: 'test-model', effort: 'high', tools: [{ id: 'github', type: 'app' }] });
+    await f.queue.enqueue('Last');
+    f.queue.isPaused = true;
+    const expected = JSON.parse(JSON.stringify(f.queue.items));
+    const session = Object.fromEntries(Object.entries(f.window.sessionStorage));
+    const next = fixture(t, { url: newUrl, data: f.data, session });
+    await next.queue.loadFromStorage();
+    assert.deepEqual(JSON.parse(JSON.stringify(next.queue.items)), expected);
+    assert.equal(next.queue.isPaused, true);
+    assert.equal(next.queue.previousTabId, f.queue.tabId);
+    assert.deepEqual(f.data[f.queue.storageKeyQueue], []);
+    await next.queue.loadFromStorage();
+    assert.equal(next.queue.items.length, 2, 'recovery must be idempotent');
+  }
+});
+
+test('new-session recovery retains destination work and does not inject into unrelated existing chats', async t => {
+  const f = fixture(t);
+  await f.queue.enqueue('Source');
+  const session = Object.fromEntries(Object.entries(f.window.sessionStorage));
+  const other = fixture(t, { url: 'https://chatgpt.com/c/unrelated', data: f.data, session });
+  await other.queue.loadFromStorage();
+  assert.equal(other.queue.items.length, 0);
+  assert.equal(f.data[f.queue.storageKeyQueue].length, 1);
+  const next = fixture(t, { url: 'https://chatgpt.com/', data: f.data, session });
+  f.data[next.queue.storageKeyQueue] = [{ id: 'existing', text: 'Destination' }];
+  await next.queue.loadFromStorage();
+  assert.deepEqual(Array.from(next.queue.items, x => x.text), ['Source', 'Destination']);
+});
+
+test('automatic reload waits for durable storage and recovers a newly assigned conversation ID', async t => {
+  const f = fixture(t);
+  await f.queue.enqueue('Keep');
+  const set = f.window.chrome.storage.local.set;
+  let release;
+  f.window.chrome.storage.local.set = async values => {
+    await new Promise(resolve => { release = resolve; });
+    return set(values);
+  };
+  let reloads = 0;
+  f.queue.reloadPage = () => { reloads++; };
+  const pending = f.queue.reloadWithQueue();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reloads, 0);
+  release();
+  assert.equal(await pending, true);
+  assert.equal(reloads, 1);
+  const next = fixture(t, { url: 'https://chatgpt.com/c/new-session', data: f.data,
+    session: Object.fromEntries(Object.entries(f.window.sessionStorage)) });
+  await next.queue.loadFromStorage();
+  assert.deepEqual(Array.from(next.queue.items, x => x.text), ['Keep']);
+});
+
+test('failed recovery keeps the source for retry and failed persistence prevents reload', async t => {
+  const f = fixture(t);
+  await f.queue.enqueue('Keep');
+  const next = fixture(t, { url: 'https://chatgpt.com/', data: f.data,
+    session: Object.fromEntries(Object.entries(f.window.sessionStorage)) });
+  const set = next.window.chrome.storage.local.set;
+  next.window.chrome.storage.local.set = async () => { throw new Error('storage unavailable'); };
+  await next.queue.loadFromStorage();
+  assert.equal(next.queue.isPaused, true);
+  assert.equal(f.data[f.queue.storageKeyQueue][0].text, 'Keep');
+  next.window.chrome.storage.local.set = set;
+  await next.queue.loadFromStorage();
+  assert.equal(next.queue.items[0].text, 'Keep');
+  f.window.chrome.storage.local.set = async () => { throw new Error('storage unavailable'); };
+  f.queue.reloadPage = () => assert.fail('must not reload without saving');
+  assert.equal(await f.queue.reloadWithQueue(), false);
+  assert.equal(f.queue.isPaused, true);
+});
+
+test('SPA new-chat transition carries work while existing conversation switching stays separate', async t => {
+  const f = fixture(t);
+  await f.queue.enqueue('Pending');
+  await f.queue.handleUrlChange('https://chatgpt.com/');
+  assert.deepEqual(Array.from(f.queue.items, x => x.text), ['Pending']);
+  f.queue.lastSentTimestamp = Date.now();
+  await f.queue.handleUrlChange('https://chatgpt.com/c/assigned');
+  assert.deepEqual(Array.from(f.queue.items, x => x.text), ['Pending']);
+  // Simulate a later ordinary switch to another existing conversation.
+  await f.queue.handleUrlChange('https://chatgpt.com/c/unrelated');
+  assert.equal(f.queue.items.length, 0);
+});
+
+test('binding clears the temporary queue so completed work cannot reappear in the next session', async t => {
+  const f = fixture(t, { url: 'https://chatgpt.com/' });
+  await f.queue.enqueue('Already sent');
+  const temporaryKey = f.queue.storageKeyQueue;
+  f.queue.lastSentTimestamp = Date.now();
+  await f.queue.handleUrlChange('https://chatgpt.com/c/assigned');
+  assert.deepEqual(f.data[temporaryKey], []);
+  await f.queue.removeItem(f.queue.items[0].id);
+  await f.queue.enqueue('Still pending');
+  await f.queue.handleUrlChange('https://chatgpt.com/');
+  assert.deepEqual(Array.from(f.queue.items, x => x.text), ['Still pending']);
+});
+
+test('manual reload redirect to an assigned ID recovers the queue using navigation evidence', async t => {
+  const f = fixture(t);
+  await f.queue.enqueue('Pending');
+  const next = fixture(t, { url: 'https://chatgpt.com/c/assigned', data: f.data,
+    session: Object.fromEntries(Object.entries(f.window.sessionStorage)) });
+  next.window.performance.getEntriesByType = () => [{ type: 'reload' }];
+  await next.queue.loadFromStorage();
+  assert.deepEqual(Array.from(next.queue.items, x => x.text), ['Pending']);
+});
+
+test('replayed rollover marker cannot erase work already transferred to the destination', async t => {
+  const f = fixture(t);
+  await f.queue.enqueue('Pending');
+  f.queue.navigateToNewChat = () => {};
+  await f.queue.startNewChat('Recover');
+  const session = Object.fromEntries(Object.entries(f.window.sessionStorage));
+  const next = fixture(t, { url: 'https://chatgpt.com/', data: f.data, session });
+  await next.queue.loadFromStorage();
+  await next.queue.restoreConversationRollover();
+  next.window.sessionStorage.setItem(markerKey, session[markerKey]);
+  await next.queue.restoreConversationRollover();
+  assert.deepEqual(Array.from(next.queue.items, x => x.text), ['Pending']);
+});
+
+test('opening an existing chat from a new chat does not overwrite either pending queue', async t => {
+  const f = fixture(t, { url: 'https://chatgpt.com/' });
+  await f.queue.enqueue('New-chat work');
+  const oldKey = f.queue.storageKeyQueue;
+  const targetKey = `cgq_queue_${f.queue.sessionTabId}_c_existing`;
+  f.data[targetKey] = [{ id: 'existing', text: 'Existing work' }];
+  await f.queue.handleUrlChange('https://chatgpt.com/c/existing');
+  assert.deepEqual(Array.from(f.queue.items, x => x.text), ['Existing work']);
+  assert.deepEqual(f.data[oldKey].map(x => x.text), ['New-chat work']);
+});
