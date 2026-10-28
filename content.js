@@ -92,6 +92,9 @@
   const STALL_MS = 60 * 60 * 1000; // no answer progress this long -> continue in a new chat
   const SESSION_KEY_CHAT_ROLLOVER = 'cgq_chat_rollover';
   const SESSION_KEY_QUEUE_SOURCE = 'cgq_queue_source';
+  const QUEUE_COMMAND_ACTIONS = new Set([
+    'TOGGLE_PAUSE', 'CLEAR_QUEUE', 'SEND_IMMEDIATELY', 'REMOVE_ITEM', 'MOVE_ITEM', 'UPDATE_ITEM'
+  ]);
 
   const DEFAULT_SETTINGS = {
     minReadDelay: 2.5,          // seconds to wait after ChatGPT completely stops
@@ -2258,11 +2261,11 @@
       return HumanSimulator.hasSendEvidence(prompt, beforeLast, beforeText);
     }
 
-    static async clickSend(prompt) {
+    static async clickSend(prompt, canSubmit = () => true) {
       const beforeLast = HumanSimulator.lastUserNode();
       const beforeText = String(beforeLast?.innerText || beforeLast?.textContent || '').replace(/\s+/g, ' ').trim();
       const input = DOM.getPromptInput();
-      if (DOM.isGenerating()) return false;
+      if (!canSubmit() || DOM.isGenerating()) return false;
 
       const isButtonDisabled = (btn) => {
         if (!btn) return true;
@@ -2281,7 +2284,7 @@
       // 2. Poll for send button to become available & enabled (up to 2000ms)
       const startTime = Date.now();
       let sendBtn = DOM.getSendButton();
-      while (isButtonDisabled(sendBtn) && (Date.now() - startTime < 2000)) {
+      while (canSubmit() && isButtonDisabled(sendBtn) && (Date.now() - startTime < 2000)) {
         await sleep(80);
         sendBtn = DOM.getSendButton();
       }
@@ -2302,13 +2305,14 @@
       // through clicks, form submission or synthetic Enter events.
       const canRetry = () => {
         const button = DOM.getSendButton();
-        return !DOM.isGenerating() && !isButtonDisabled(button) &&
+        return canSubmit() && !DOM.isGenerating() && !isButtonDisabled(button) &&
           !button.matches('button[data-testid*="stop" i], button[aria-label*="Stop" i], button[aria-label*="停止"], button[aria-label*="中断"]') &&
           !button.querySelector('rect') && String(DOM.getComposerText()).replace(/\s+/g, ' ').trim() === String(prompt).replace(/\s+/g, ' ').trim();
       };
       if (!canRetry()) return false;
 
       // 3. Primary attempt: Click the send button if present
+      sendBtn = DOM.getSendButton();
       if (sendBtn) {
         triggerFullClick(sendBtn);
 
@@ -2638,7 +2642,7 @@
       this.reloadingQueue = true;
       try {
         if (await this.saveQueue() === false) throw new Error('Queue save failed');
-        this.rememberQueueSource(true);
+        if (!this.rememberQueueSource(true)) throw new Error('Queue recovery checkpoint failed');
         this.reloadPage();
         return true;
       } catch (error) {
@@ -2650,9 +2654,15 @@
     }
 
     rememberQueueSource(reloading = false) {
-      sessionStorage.setItem(SESSION_KEY_QUEUE_SOURCE, JSON.stringify({
-        tabId: this.tabId, url: this.currentUrl, isPaused: this.isPaused, reloading
-      }));
+      try {
+        sessionStorage.setItem(SESSION_KEY_QUEUE_SOURCE, JSON.stringify({
+          tabId: this.tabId, url: this.currentUrl, isPaused: this.isPaused, reloading
+        }));
+        return true;
+      } catch (error) {
+        console.warn('[ChatGPT Queue] Recovery checkpoint error:', error);
+        return false;
+      }
     }
 
     async restoreReloadedQueue() {
@@ -2989,24 +2999,25 @@
         console.log(`[ChatGPT Queue] Binding active conversation: new -> ${newConvId}`);
         const oldTabId = this.tabId;
         const newTabId = computeTabId(this.sessionTabId, newConvId);
-        let transferred;
         try {
           await this.serializeQueueWrite(async () => {
-            transferred = this.items;
+            const transferred = this.items;
+            const paused = this.isPaused;
             await chrome.storage.local.set({
               [this.storageKeyQueue]: [], [`cgq_queue_${newTabId}`]: transferred
             });
+            // Publish the new identity before admitting the next queued storage operation.
+            this.conversationId = newConvId;
+            this.tabId = newTabId;
+            this.items = transferred;
+            this.previousTabId = oldTabId;
+            this.isPaused = paused;
+            this.rememberQueueSource();
           });
         } catch (error) {
           this.currentUrl = oldUrl;
           throw error;
         }
-        this.conversationId = newConvId;
-        this.tabId = newTabId;
-        this.items = transferred;
-        this.previousTabId = oldTabId;
-        this.isPaused = this.isPaused;
-        this.rememberQueueSource();
 
         // Remove oldTabId from registry
         try {
@@ -3419,19 +3430,21 @@
       } catch (e) { return null; }
     }
 
+    async executeQueueCommand(cmd) {
+      if (!QUEUE_COMMAND_ACTIONS.has(cmd?.action)) return false;
+      if (cmd.action === 'TOGGLE_PAUSE') { this.togglePause(); return true; }
+      if (cmd.action === 'CLEAR_QUEUE') return this.clearQueue();
+      if (cmd.action === 'SEND_IMMEDIATELY') return this.sendImmediately(cmd.id);
+      if (cmd.action === 'REMOVE_ITEM') return this.removeItem(cmd.id);
+      if (cmd.action === 'MOVE_ITEM') return this.moveItem(cmd.id, cmd.direction);
+      if (cmd.action === 'UPDATE_ITEM') return this.updateItem(cmd.id, cmd.text);
+    }
+
     async handleRemoteCommand(cmd) {
       if (!cmd || !cmd.action) return;
 
-      if (cmd.action === 'TOGGLE_PAUSE') {
-        this.togglePause();
-      } else if (cmd.action === 'CLEAR_QUEUE') {
-        this.clearQueue();
-      } else if (cmd.action === 'SEND_IMMEDIATELY') {
-        this.sendImmediately(cmd.id);
-      } else if (cmd.action === 'REMOVE_ITEM') {
-        this.removeItem(cmd.id);
-      } else if (cmd.action === 'MOVE_ITEM') {
-        this.moveItem(cmd.id, cmd.direction);
+      if (QUEUE_COMMAND_ACTIONS.has(cmd.action)) {
+        await this.executeQueueCommand(cmd);
       } else if (cmd.action === 'ANSWER_ACTION') {
         this.answerAction(cmd);
       } else if (cmd.action === 'SKIP_THINKING') {
@@ -3473,7 +3486,12 @@
       const key = this.storageKeyQueue;
       return this.serializeQueueWrite(async () => {
         try {
+          if (key !== this.storageKeyQueue) {
+            showToast('会話が切り替わりました。入力内容を保持して、もう一度お試しください。');
+            return false;
+          }
           const stored = await chrome.storage.local.get([key]);
+          if (key !== this.storageKeyQueue) return false;
           const original = this.items;
           const next = (Array.isArray(stored[key]) ? stored[key] : original).map(item => ({ ...item }));
           if (change(next) === false) return false;
@@ -3497,11 +3515,10 @@
 
     async saveQueue() {
       const key = this.storageKeyQueue;
-      const snapshot = this.items.map(item => ({ ...item }));
       return this.serializeQueueWrite(async () => {
         try {
-          const items = key === this.storageKeyQueue ? this.items : snapshot;
-          await chrome.storage.local.set({ [key]: items });
+          if (key !== this.storageKeyQueue) return false;
+          await chrome.storage.local.set({ [key]: this.items });
           if (key === this.storageKeyQueue) this.rememberQueueSource();
           this.notify();
           return true;
@@ -3725,6 +3742,9 @@
 
         // 4. Next item ready
         const nextItem = this.items[0];
+        const sendingTabId = this.tabId;
+        const canSubmit = () => !this.isPaused && this.items[0]?.id === nextItem.id &&
+          this.tabId === sendingTabId && extractConversationId(window.location.href) === this.conversationId;
         this.activeItem = nextItem;
 
         // Commands are local queue actions. Wait for generation and preserve a user's draft.
@@ -3872,7 +3892,7 @@
           let draftSent = false;
           this.sendingNow = true;
           try {
-            draftSent = await HumanSimulator.clickSend(draft);
+            draftSent = await HumanSimulator.clickSend(draft, canSubmit);
           } catch (error) {
             console.warn('[ChatGPT Queue] draft send failed:', error);
           } finally {
@@ -3884,7 +3904,7 @@
             this.lastSentPrompt = draft;
             this.setState(QueueState.IDLE, '入力欄の下書きを送信しました');
             await sleep(2000);
-          } else {
+          } else if (canSubmit()) {
             this.isPaused = true;
             this.setState(QueueState.PAUSED, '入力欄の下書きを送信できなかったため停止しました');
             showToast('入力欄の下書きを送信できなかったため一時停止しました');
@@ -3993,7 +4013,7 @@
         const sendBaselineText = String(sendBaseline?.innerText || sendBaseline?.textContent || '').replace(/\s+/g, ' ').trim();
         this.sendingNow = true;
         try {
-          sent = await HumanSimulator.clickSend(resolvedPrompt.text);
+          sent = await HumanSimulator.clickSend(resolvedPrompt.text, canSubmit);
         } catch (error) {
           // Never let a send error end the loop with the prompt left in the composer.
           console.warn('[ChatGPT Queue] send failed:', error);
@@ -4007,6 +4027,7 @@
         if (await this.checkConversationLimitAndStartNewChat()) continue;
 
         if (!sent) sent = HumanSimulator.hasSendEvidence(resolvedPrompt.text, sendBaseline, sendBaselineText);
+        if (!sent && !canSubmit()) continue;
 
         if (sent) {
           this.recordResearchSend(selectedTools);
@@ -5192,12 +5213,17 @@
   }
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (['SEND_PROMPT_TO_TAB', 'ADD_TO_TAB_QUEUE', 'ADD_MANY_TO_TAB_QUEUE'].includes(request.action) &&
+    if (['SEND_PROMPT_TO_TAB', 'ADD_TO_TAB_QUEUE', 'ADD_MANY_TO_TAB_QUEUE', 'QUEUE_COMMAND'].includes(request.action) &&
         ((request.expectedTabId && request.expectedTabId !== queueManager.tabId) || extractConversationId(window.location.href) !== queueManager.conversationId)) {
       sendResponse({ success: false, error: '会話が切り替わりました。対象を確認して再試行してください' });
       return false;
     }
-    if (request.action === 'GET_OLDER_HISTORY') {
+    if (request.action === 'QUEUE_COMMAND') {
+      queueManager.executeQueueCommand(request.command).then(success => {
+        sendResponse({ success: !!success, ...(!success && { error: '操作を保存できませんでした。対象タブのキューを確認してください' }) });
+      }, error => sendResponse({ success: false, error: error.message }));
+      return true;
+    } else if (request.action === 'GET_OLDER_HISTORY') {
       getOlderHistory(Number(request.have) || 0)
         .then(sendResponse, error => sendResponse({ success: false, error: error.message }));
       return true;

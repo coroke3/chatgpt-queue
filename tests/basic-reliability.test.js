@@ -171,3 +171,92 @@ test('partial bulk save keeps the modal and retries only targets not already sav
   f.pending[2].done({ success: true }); await tick();
   assert.equal(input.value, ''); assert.equal(doc.getElementById('dashboard-bulk-modal').style.display, 'none');
 });
+
+test('pausing or removing the active item while the send button is becoming ready prevents submission', async t => {
+  for (const platform of ['chatgpt', 'gemini']) for (const operation of ['pause', 'remove']) {
+    const f = native(t, platform);
+    const item = await f.queue.enqueue('Keep this prompt');
+    const button = f.window.document.querySelector('button');
+    button.disabled = true;
+    f.human.typeText = async (_, text) => { f.input.value = text; return true; };
+    let clicks = 0;
+    button.addEventListener('click', event => { event.preventDefault(); clicks++; });
+    f.window.__duringWait = async ms => {
+      if (ms !== 80) return;
+      if (operation === 'pause') f.queue.togglePause();
+      else await f.queue.removeItem(item.id);
+      button.disabled = false;
+    };
+    await f.queue.runLoopStep();
+    assert.equal(clicks, 0, operation);
+    assert.equal(f.input.value, 'Keep this prompt', 'cancelled submission keeps the editor');
+    if (operation === 'pause') assert.equal(f.queue.items.length, 1);
+  }
+});
+
+test('remote queue operations acknowledge persistence and reject stale conversations', async t => {
+  const f = native(t);
+  const [first, second, third] = await f.queue.enqueueMany(['First', 'Second', 'Third']);
+  let release;
+  const save = f.window.chrome.storage.local.set;
+  f.window.chrome.storage.local.set = values => new Promise(resolve => {
+    release = async () => { await save(values); resolve(); };
+  });
+  const responses = [];
+  const command = { action: 'QUEUE_COMMAND', expectedTabId: f.queue.tabId,
+    command: { action: 'REMOVE_ITEM', id: first.id } };
+  assert.equal(f.message(command, response => responses.push(response)), true);
+  await tick(); assert.equal(responses.length, 0);
+  await release(); await tick();
+  assert.equal(responses[0].success, true);
+  assert.deepEqual(f.data[f.queue.storageKeyQueue].map(x => x.id), [second.id, third.id]);
+  f.window.chrome.storage.local.set = async () => { throw new Error('quota'); };
+  let failed;
+  f.message({ ...command, command: { action: 'CLEAR_QUEUE' } }, response => { failed = response; });
+  await tick();
+  assert.equal(failed.success, false);
+  assert.equal(f.queue.items.length, 2);
+  let stale;
+  f.message({ ...command, expectedTabId: 'old-chat' }, response => { stale = response; });
+  assert.equal(stale.success, false);
+});
+
+test('rapid remote edits, moves and deletions preserve every intended operation', async t => {
+  for (const platform of ['chatgpt', 'gemini']) {
+    const f = native(t, platform);
+    const [first, second, third] = await f.queue.enqueueMany(['First', 'Second', 'Third']);
+    const commands = [
+      { action: 'UPDATE_ITEM', id: second.id, text: 'Second\nupdated' },
+      { action: 'MOVE_ITEM', id: third.id, direction: 'up' },
+      { action: 'REMOVE_ITEM', id: first.id }
+    ];
+    const responses = await Promise.all(commands.map(command => new Promise(resolve => {
+      f.message({ action: 'QUEUE_COMMAND', expectedTabId: f.queue.tabId, command }, resolve);
+    })));
+    assert.ok(responses.every(response => response.success));
+    assert.deepEqual(f.data[f.queue.storageKeyQueue].map(x => x.text), ['Third', 'Second\nupdated']);
+    await new Promise(resolve => f.message({ action: 'QUEUE_COMMAND', expectedTabId: f.queue.tabId,
+      command: { action: 'TOGGLE_PAUSE' } }, resolve));
+    assert.equal(f.queue.isPaused, true);
+    await new Promise(resolve => f.message({ action: 'QUEUE_COMMAND', expectedTabId: f.queue.tabId,
+      command: { action: 'SEND_IMMEDIATELY', id: second.id } }, resolve));
+    assert.equal(f.queue.isPaused, false);
+    assert.deepEqual(f.data[f.queue.storageKeyQueue].map(x => x.text), ['Second\nupdated', 'Third']);
+  }
+});
+
+test('pausing after a click with no send confirmation prevents form and Enter fallback attempts', async t => {
+  const f = native(t);
+  await f.queue.enqueue('Keep');
+  f.human.typeText = async (_, text) => { f.input.value = text; return true; };
+  let clicks = 0, submits = 0, enters = 0;
+  f.window.document.querySelector('button').addEventListener('click', event => {
+    event.preventDefault(); clicks++; f.queue.togglePause();
+  });
+  f.window.document.querySelector('form').addEventListener('submit', event => { event.preventDefault(); submits++; });
+  f.input.addEventListener('keydown', () => enters++);
+  await f.queue.runLoopStep();
+  assert.equal(clicks, 1);
+  assert.equal(submits, 0); assert.equal(enters, 0);
+  assert.equal(f.queue.items.length, 1); assert.equal(f.input.value, 'Keep');
+});

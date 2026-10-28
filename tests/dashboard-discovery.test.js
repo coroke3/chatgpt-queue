@@ -176,7 +176,9 @@ test('composer queues update in place while drafts and queue actions work in bot
   assert.equal(card.querySelector('.cgq-dash-prompt-input'), input);
   assert.equal(input.value, '並列の書きかけ');
   card.querySelector('[data-action="delete"]').click();
-  assert.ok(f.commands.some(command => command.cgq_cmd_real_42?.action === 'REMOVE_ITEM' && command.cgq_cmd_real_42.id === 'next'));
+  assert.ok(f.requests.some(request => request.action === 'QUEUE_COMMAND' && request.expectedTabId === 'real_42' &&
+    request.command.action === 'REMOVE_ITEM' && request.command.id === 'next'));
+  assert.ok(!f.commands.some(command => command.cgq_cmd_real_42), 'queue operations must not overwrite a shared command slot');
   f.publish({ chat: { ...current, items: [] } });
   assert.equal(card.querySelector('.cgq-card-queue-slot').textContent, '');
   assert.match(card.querySelector('[data-view="results"]').textContent, /回答本文/);

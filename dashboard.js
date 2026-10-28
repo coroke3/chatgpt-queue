@@ -3247,6 +3247,23 @@ a{color:inherit}
       showToast('対象タブを再読み込みして接続してください。');
       return false;
     }
+    if (['TOGGLE_PAUSE', 'CLEAR_QUEUE', 'SEND_IMMEDIATELY', 'REMOVE_ITEM', 'MOVE_ITEM', 'UPDATE_ITEM'].includes(command.action)) {
+      const tab = cachedTabsData.get(tabId);
+      if (!tab?.chromeTabId) { onComplete(false); return false; }
+      try {
+        chrome.tabs.sendMessage(tab.chromeTabId, { action: 'QUEUE_COMMAND', expectedTabId: tabId, command }, response => {
+          const failed = chrome.runtime.lastError || !response?.success;
+          if (failed) showToast(response?.error || '操作を確認できません。対象タブのキューを確認してください');
+          onComplete(!failed);
+          if (!failed) refreshDashboard();
+        });
+      } catch (error) {
+        onComplete(false);
+        showToast('対象タブに接続できません。キューの状態を確認してください');
+        return false;
+      }
+      return true;
+    }
     if (command.action === 'ENQUEUE' || command.action === 'ENQUEUE_MANY') {
       const tab = cachedTabsData.get(tabId);
       if (!tab?.chromeTabId || enqueueSending.has(tabId)) return false;

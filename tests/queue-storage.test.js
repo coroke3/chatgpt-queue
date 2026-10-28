@@ -108,3 +108,43 @@ test('disabled native send controls are never enabled, clicked or bypassed', asy
     assert.ok(button.hasAttribute('disabled') || button.getAttribute('aria-disabled') === 'true');
   }
 });
+
+test('a recovery checkpoint failure cannot turn an already saved addition into a failed acknowledgement', async t => {
+  const { queue, window, store } = fixture(t);
+  const nativeSet = window.Storage.prototype.setItem;
+  window.Storage.prototype.setItem = function(key, value) {
+    if (key === 'cgq_queue_source') throw new Error('session storage unavailable');
+    return nativeSet.call(this, key, value);
+  };
+  const item = await queue.enqueue('Saved once');
+  assert.ok(item, 'durably saved prompts must be acknowledged');
+  assert.equal(store[queue.storageKeyQueue].length, 1);
+  assert.equal(queue.items.length, 1);
+});
+
+test('an addition racing with new-chat binding cannot be acknowledged in an abandoned temporary queue', async t => {
+  const { window } = fixture(t);
+  window.history.replaceState({}, '', '/');
+  const queue = new window.__test.QueueManager();
+  queue.notify = () => {}; queue.reportToRegistry = async () => null;
+  await queue.enqueue('Original');
+  const oldKey = queue.storageKeyQueue;
+  queue.lastSentTimestamp = Date.now();
+  const save = window.chrome.storage.local.set;
+  let release;
+  window.chrome.storage.local.set = async values => {
+    if (Array.isArray(values[oldKey]) && values[oldKey].length === 0) {
+      await new Promise(resolve => { release = resolve; });
+    }
+    return save(values);
+  };
+  const binding = queue.handleUrlChange('https://chatgpt.com/c/assigned');
+  await new Promise(resolve => setImmediate(resolve));
+  const addition = queue.enqueue('During the switch');
+  release();
+  await binding;
+  const acknowledged = await addition;
+  assert.ok(!acknowledged || queue.items.some(item => item.id === acknowledged.id),
+    'a successful addition must be in the active queue, otherwise the caller must retain its draft');
+  assert.deepEqual(Array.from(queue.items, item => item.text), ['Original']);
+});
